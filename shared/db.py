@@ -443,9 +443,26 @@ def get_latest_llm_output(run_id: str = None, environment: str = None) -> Option
 # ============================================================================
 
 def save_policy_validation(run_id: str, validation_data: Dict[str, Any]) -> None:
-    """Save policy validation results."""
+    """
+    Save policy validation results.
+    
+    Maps agent output field names to database schema:
+    - pii_report.instances_found → pii_findings_count
+    - intent_report.total_findings → intent_violations_count
+    - policy_summary.total_violations → policy_violations_count
+    - policy_summary.medium + low → policy_warnings_count
+    """
     with get_db_connection() as conn:
         cursor = conn.cursor()
+        
+        # Extract data with correct field mappings
+        pii_report = validation_data.get('pii_report', {})
+        intent_report = validation_data.get('intent_report', {})
+        policy_summary = validation_data.get('policy_summary', {})
+        
+        # Calculate warnings count (medium + low severity violations)
+        warnings_count = policy_summary.get('medium', 0) + policy_summary.get('low', 0)
+        
         cursor.execute("""
             INSERT INTO policy_validations (
                 run_id, pii_findings_count, intent_violations_count,
@@ -453,10 +470,10 @@ def save_policy_validation(run_id: str, validation_data: Dict[str, Any]) -> None
             ) VALUES (?, ?, ?, ?, ?, ?)
         """, (
             run_id,
-            validation_data.get('pii_report', {}).get('total_findings', 0),
-            validation_data.get('intent_report', {}).get('violations_count', 0),
-            validation_data.get('policy_summary', {}).get('violations', 0),
-            validation_data.get('policy_summary', {}).get('warnings', 0),
+            pii_report.get('instances_found', 0),        # Fixed: Use correct field name
+            intent_report.get('total_findings', 0),      # Fixed: Use correct field name
+            policy_summary.get('total_violations', 0),   # Fixed: Use correct field name
+            warnings_count,                              # Fixed: Calculate from medium + low
             json.dumps(validation_data)
         ))
         logger.info(f"Saved policy validation for run: {run_id}")

@@ -17,10 +17,14 @@ import json
 import os
 import sys
 import asyncio
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # Fix encoding for Windows console
 if sys.platform == "win32":
@@ -392,6 +396,7 @@ async def validate_configuration(request: ValidationRequest, background_tasks: B
         
         # Try to load enhanced analysis data if available
         enhanced_data = None
+        validation_run_id = result.get('run_id')
         try:
             # Try to get enhanced analysis data from database
             if validation_run_id:
@@ -588,7 +593,7 @@ async def get_llm_output_endpoint():
                 "run_id": run_id,
                 "data": llm_data
             }
-    else:
+        else:
             raise HTTPException(status_code=404, detail="No LLM output found for latest run")
             
     except HTTPException:
@@ -988,7 +993,7 @@ async def get_service_llm_output(service_id: str, environment: Optional[str] = N
                     "service_id": service_id,
                     "timestamp": last_result.get("timestamp")
                 }
-        except Exception as e:
+    except Exception as e:
         print(f"⚠️ Could not load LLM output from database for {service_id}: {e}")
     
     # If no LLM output file found, return error
@@ -1041,8 +1046,8 @@ def get_last_service_result(service_id: str, environment: Optional[str] = None):
                 if result_data:
                     print(f"✅ Loaded stored result for {service_id}/{environment} from database")
                     return result_data
-    else:
-        # No environment specified - find most recent from any environment
+        else:
+            # No environment specified - find most recent from any environment
             all_runs = get_all_validation_runs()
             service_runs = [run for run in all_runs if run.get('service') == service_id]
             
@@ -1053,7 +1058,7 @@ def get_last_service_result(service_id: str, environment: Optional[str] = None):
                 if result_data:
                     print(f"✅ Loaded stored result for {service_id} from database")
                     return result_data
-            except Exception as e:
+    except Exception as e:
         print(f"⚠️ Failed to load stored result from database: {e}")
     
     return None
