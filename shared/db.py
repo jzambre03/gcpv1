@@ -706,3 +706,50 @@ def export_to_json(output_dir: Path = None):
             
             logger.info(f"Exported {table_name} to {output_file}")
 
+
+# ============================================================================
+# Wrapper/Alias Functions for Backward Compatibility
+# ============================================================================
+
+def get_all_validation_runs(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get all validation runs (wrapper for backward compatibility)."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM validation_runs 
+            ORDER BY created_at DESC LIMIT ?
+        """, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_llm_output(run_id: str) -> Optional[Dict[str, Any]]:
+    """Get LLM output by run_id (wrapper for get_latest_llm_output)."""
+    return get_latest_llm_output(run_id=run_id)
+
+
+def get_policy_validation(run_id: str) -> Optional[Dict[str, Any]]:
+    """Get policy validation by run_id (wrapper for get_latest_policy_validation)."""
+    return get_latest_policy_validation(run_id)
+
+
+def get_certification(run_id: str) -> Optional[Dict[str, Any]]:
+    """Get certification by run_id (wrapper for get_latest_certification)."""
+    return get_latest_certification(run_id)
+
+
+def get_report(run_id: str) -> Optional[str]:
+    """Get report by run_id (wrapper for get_latest_report)."""
+    return get_latest_report(run_id)
+
+
+def get_aggregated_results(run_id: str) -> Optional[Dict[str, Any]]:
+    """Get aggregated results by run_id (wrapper for get_latest_aggregated_results)."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT aggregated_data FROM aggregated_results 
+            WHERE run_id = ? ORDER BY created_at DESC LIMIT 1
+        """, (run_id,))
+        row = cursor.fetchone()
+        return json.loads(row['aggregated_data']) if row else None
+
