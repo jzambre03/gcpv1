@@ -227,10 +227,21 @@ def execute_worker_pipeline(
                 }
             }
         
-        golden_path = collector_result.result.get("golden_path")
-        drift_path = collector_result.result.get("drift_path")
-        golden_branch = collector_result.result.get("golden_branch")
-        drift_branch = collector_result.result.get("drift_branch")
+        # Extract repository snapshots (may be nested or at top level)
+        repo_snapshots = collector_result.result.get("repository_snapshots", {})
+        if repo_snapshots:
+            # Nested format
+            golden_path = repo_snapshots.get("golden_path")
+            drift_path = repo_snapshots.get("drift_path")
+            golden_branch = repo_snapshots.get("golden_branch")
+            drift_branch = repo_snapshots.get("drift_branch")
+        else:
+            # Top-level format (backward compatibility)
+            golden_path = collector_result.result.get("golden_path")
+            drift_path = collector_result.result.get("drift_path")
+            golden_branch = collector_result.result.get("golden_branch")
+            drift_branch = collector_result.result.get("drift_branch")
+        
         target_folder = collector_result.result.get("target_folder", target_folder)
         
         # Validate required fields
