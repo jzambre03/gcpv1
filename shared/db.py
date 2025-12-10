@@ -318,9 +318,38 @@ def save_context_bundle(run_id: str, bundle_data: Dict[str, Any]) -> str:
             json.dumps(bundle_data)
         ))
         
-        # Save individual deltas
+        # Save individual deltas in the same connection
         for delta in bundle_data.get('deltas', []):
-            save_config_delta(run_id, bundle_id, delta)
+            # Handle locator - can be string or dict
+            locator = delta.get('locator')
+            if isinstance(locator, dict):
+                locator_type = locator.get('type')
+                locator_value = locator.get('value')
+            elif isinstance(locator, str):
+                locator_type = 'path'
+                locator_value = locator
+            else:
+                locator_type = None
+                locator_value = None
+            
+            cursor.execute("""
+                INSERT OR REPLACE INTO config_deltas (
+                    run_id, bundle_id, delta_id, file_path, locator_type, locator_value,
+                    old_value, new_value, drift_category, risk_level, line_number_range
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                run_id,
+                bundle_id,
+                delta.get('id'),
+                delta.get('file'),
+                locator_type,
+                locator_value,
+                json.dumps(delta.get('old')),
+                json.dumps(delta.get('new')),
+                delta.get('drift_category'),
+                delta.get('risk_level'),
+                json.dumps(delta.get('line_number_range'))
+            ))
         
         logger.info(f"Saved context bundle: {bundle_id}")
         return bundle_id
@@ -355,6 +384,19 @@ def save_config_delta(run_id: str, bundle_id: str, delta: Dict[str, Any]) -> Non
     """Save a configuration delta."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
+        
+        # Handle locator - can be string or dict
+        locator = delta.get('locator')
+        if isinstance(locator, dict):
+            locator_type = locator.get('type')
+            locator_value = locator.get('value')
+        elif isinstance(locator, str):
+            locator_type = 'path'
+            locator_value = locator
+        else:
+            locator_type = None
+            locator_value = None
+        
         cursor.execute("""
             INSERT OR REPLACE INTO config_deltas (
                 run_id, bundle_id, delta_id, file_path, locator_type, locator_value,
@@ -365,8 +407,8 @@ def save_config_delta(run_id: str, bundle_id: str, delta: Dict[str, Any]) -> Non
             bundle_id,
             delta.get('id'),
             delta.get('file'),
-            delta.get('locator', {}).get('type'),
-            delta.get('locator', {}).get('value'),
+            locator_type,
+            locator_value,
             json.dumps(delta.get('old')),
             json.dumps(delta.get('new')),
             delta.get('drift_category'),

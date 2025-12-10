@@ -41,8 +41,7 @@ from shared.git_operations import (
 from shared.golden_branch_tracker import (
     get_active_golden_branch,
     add_golden_branch,
-    add_drift_branch,
-    validate_golden_exists
+    add_drift_branch
 )
 
 # Load environment variables

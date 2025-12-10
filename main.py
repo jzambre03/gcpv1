@@ -1035,7 +1035,7 @@ def get_last_service_result(service_id: str, environment: Optional[str] = None):
             all_runs = get_all_validation_runs()
             filtered_runs = [
                 run for run in all_runs
-                if run.get('service') == service_id and run.get('environment') == environment
+                if run.get('service_name') == service_id and run.get('environment') == environment
             ]
             
             if filtered_runs:
@@ -1049,7 +1049,7 @@ def get_last_service_result(service_id: str, environment: Optional[str] = None):
         else:
             # No environment specified - find most recent from any environment
             all_runs = get_all_validation_runs()
-            service_runs = [run for run in all_runs if run.get('service') == service_id]
+            service_runs = [run for run in all_runs if run.get('service_name') == service_id]
             
             if service_runs:
                 run_id = service_runs[0]['run_id']
@@ -1272,7 +1272,9 @@ async def get_service_branches(service_id: str, environment: str):
     try:
         from shared.golden_branch_tracker import get_all_branches, get_active_golden_branch
         
-        golden_branches, drift_branches = get_all_branches(service_id, environment)
+        branches_data = get_all_branches(service_id, environment)
+        golden_branches = branches_data.get('golden_branches', [])
+        drift_branches = branches_data.get('drift_branches', [])
         active_golden = get_active_golden_branch(service_id, environment)
         
         # Get drift count from last validation result for this environment
@@ -1317,10 +1319,10 @@ async def validate_golden_branch(service_id: str, environment: str):
         raise HTTPException(400, f"Invalid environment '{environment}'. Must be one of: {config['environments']}")
     
     try:
-        from shared.golden_branch_tracker import validate_golden_exists, get_active_golden_branch
+        from shared.golden_branch_tracker import get_active_golden_branch
         
-        exists = validate_golden_exists(service_id, environment)
-        active_branch = get_active_golden_branch(service_id, environment) if exists else None
+        active_branch = get_active_golden_branch(service_id, environment)
+        exists = active_branch is not None
         
         # Get drift count from last validation result for this environment
         drift_count = 0
@@ -1361,14 +1363,14 @@ async def revoke_golden_branch(service_id: str, environment: str):
         raise HTTPException(400, f"Invalid environment '{environment}'. Must be one of: {config['environments']}")
     
     try:
-        from shared.golden_branch_tracker import validate_golden_exists, get_active_golden_branch, remove_golden_branch
-        
-        # Check if golden branch exists
-        if not validate_golden_exists(service_id, environment):
-            raise HTTPException(400, f"No golden branch found for {service_id}/{environment}")
+        from shared.golden_branch_tracker import get_active_golden_branch, remove_golden_branch
         
         # Get the active golden branch
         active_branch = get_active_golden_branch(service_id, environment)
+        
+        # Check if golden branch exists
+        if not active_branch:
+            raise HTTPException(400, f"No golden branch found for {service_id}/{environment}")
         
         # Remove the golden branch from tracking
         remove_golden_branch(service_id, environment, active_branch)
@@ -1406,13 +1408,47 @@ async def get_run_history(service_id: str, environment: str):
         # Filter by service and environment
         filtered_runs = [
             run for run in all_runs
-            if run.get('service') == service_id and run.get('environment') == environment
+            if run.get('service_name') == service_id and run.get('environment') == environment
         ]
+        
+        # Transform runs to match UI expectations
+        transformed_runs = []
+        for run in filtered_runs:
+            # Get additional data for each run
+            llm_output = get_llm_output(run['run_id'])
+            
+            # Build metrics from llm_output
+            metrics = {}
+            if llm_output:
+                summary = llm_output.get('summary', {})
+                metrics = {
+                    'total_drifts': summary.get('total_drifts', 0),
+                    'high_risk': summary.get('high_risk', 0),
+                    'medium_risk': summary.get('medium_risk', 0),
+                    'low_risk': summary.get('low_risk', 0),
+                    'allowed_variance': summary.get('allowed_variance', 0)
+                }
+            
+            transformed_run = {
+                'run_id': run['run_id'],
+                'verdict': run.get('verdict', 'UNKNOWN'),
+                'status': run.get('status', 'unknown'),
+                'timestamp': run.get('created_at', ''),
+                'created_at': run.get('created_at', ''),
+                'environment': run.get('environment', ''),
+                'service_name': run.get('service_name', service_id),
+                'metrics': metrics,
+                'branches': {
+                    'golden': run.get('golden_branch', ''),
+                    'drift': run.get('drift_branch', '')
+                }
+            }
+            transformed_runs.append(transformed_run)
         
         return {
             "service_id": service_id,
             "environment": environment,
-            "runs": filtered_runs
+            "runs": transformed_runs
         }
     except Exception as e:
         logger.error(f"Failed to get run history from database: {e}")
@@ -1425,36 +1461,47 @@ async def get_run_history(service_id: str, environment: str):
 
 @app.get("/api/services/{service_id}/run/{run_id}")
 async def get_run_details(service_id: str, run_id: str):
-    """Get detailed results for a specific run"""
+    """Get detailed results for a specific run from database"""
     if service_id not in SERVICES_CONFIG:
         raise HTTPException(404, f"Service {service_id} not found")
     
-    # Search for the run in all environments
-    for env in SERVICES_CONFIG[service_id]["environments"]:
-        history_file = Path("config_data") / "service_results" / service_id / env / "run_history.json"
+    try:
+        # Get run details from database
+        run_data = get_run_by_id(run_id)
         
-        if history_file.exists():
-            try:
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    history = json.load(f)
-                
-                # Find the specific run
-                for run in history["runs"]:
-                    if run["run_id"] == run_id:
-                        # Try to load the detailed result file
-                        result_file = run["file_paths"].get("stored_result")
-                        if result_file and Path(result_file).exists():
-                            with open(result_file, 'r', encoding='utf-8') as rf:
-                                detailed_result = json.load(rf)
-                            return detailed_result
-                        else:
-                            # Return the run metadata at least
-                            return {"run": run, "environment": env}
-            except Exception as e:
-                print(f"⚠️ Error searching in {env}: {e}")
-                continue
-    
-    raise HTTPException(404, f"Run {run_id} not found for service {service_id}")
+        if not run_data:
+            raise HTTPException(404, f"Run {run_id} not found")
+        
+        # Verify it belongs to the requested service
+        if run_data.get('service_name') != service_id:
+            raise HTTPException(404, f"Run {run_id} not found for service {service_id}")
+        
+        # Get aggregated results
+        aggregated = get_aggregated_results(run_id)
+        
+        # Get LLM output
+        llm_output = get_llm_output(run_id)
+        
+        # Get certification if available
+        certification = get_certification(run_id)
+        
+        # Build comprehensive response
+        response = {
+            "run": run_data,
+            "aggregated_results": aggregated,
+            "llm_output": llm_output,
+            "certification": certification,
+            "environment": run_data.get('environment'),
+            "service_name": run_data.get('service_name')
+        }
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"⚠️ Error loading run details: {e}")
+        raise HTTPException(500, f"Failed to load run details: {str(e)}")
 
 
 @app.get("/health")
