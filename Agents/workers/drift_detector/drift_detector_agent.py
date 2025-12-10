@@ -49,6 +49,9 @@ from shared.drift_analyzer import (
 
 logger = logging.getLogger(__name__)
 
+# Define PROJECT_ROOT for policies.yaml lookup
+PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
+
 
 def is_config_file(file_path: str) -> bool:
     """Check if file is a configuration file."""
@@ -1065,8 +1068,7 @@ Execute the analysis now.
             golden_temp = Path(golden_path)
             drift_temp = Path(drift_path)
             
-            # Load policies
-            PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.resolve()
+            # Load policies (PROJECT_ROOT defined at module level)
             policies_path = PROJECT_ROOT / "shared" / "policies.yaml"
             if not policies_path.exists():
                 policies_path = None
