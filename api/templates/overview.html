@@ -1,0 +1,758 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Golden Config AI Agent</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      line-height: 1.6;
+    }
+    
+    #root {
+      min-height: 100vh;
+    }
+    
+    /* Header */
+    .header {
+      background: white;
+      border-bottom: 1px solid #e0e0e0;
+      padding: 20px 0;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    
+    .header-content {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .header-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+    
+    .header-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    
+    .search-input {
+      padding: 8px 16px;
+      border: 1px solid #d0d0d0;
+      border-radius: 4px;
+      font-size: 14px;
+      width: 250px;
+      background: white;
+    }
+    
+    .search-input:focus {
+      outline: none;
+      border-color: #666;
+    }
+    
+    /* Container */
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 32px;
+    }
+    
+    /* KPI Cards */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      margin-bottom: 32px;
+    }
+    
+    .kpi-card {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 24px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    
+    .kpi-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    
+    .kpi-icon {
+      font-size: 20px;
+    }
+    
+    .kpi-title {
+      font-size: 12px;
+      color: #666;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .kpi-value {
+      font-size: 32px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 8px;
+    }
+    
+    .kpi-subtitle {
+      font-size: 13px;
+      color: #999;
+    }
+    
+    /* Services Section */
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    
+    .section-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+    
+    /* Services Table Container */
+    .services-container {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    
+    .services-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    
+    .services-table thead {
+      background: #fafafa;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .services-table th {
+      padding: 16px 20px;
+      text-align: left;
+      font-size: 12px;
+      font-weight: 600;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .services-table tbody tr {
+      border-bottom: 1px solid #f0f0f0;
+      cursor: default;  /* ✅ Changed from pointer - row is not clickable */
+      transition: background-color 0.15s;
+    }
+    
+    .services-table tbody tr:hover {
+      background: #fafafa;  /* Keep subtle hover for better readability */
+    }
+    
+    .services-table tbody tr:last-child {
+      border-bottom: none;
+    }
+    
+    .services-table td {
+      padding: 20px;
+      font-size: 14px;
+      color: #333;
+    }
+    
+    .service-name {
+      font-weight: 500;
+      color: #1a1a1a;
+    }
+    
+    /* Status Badges */
+    .status-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: lowercase;
+    }
+    
+    .status-badge.production {
+      background: #fee;
+      color: #c00;
+    }
+    
+    .status-badge.healthy {
+      background: #333;
+      color: white;
+    }
+    
+    .status-badge.warning {
+      background: #fff8e1;
+      color: #f57c00;
+    }
+    
+    .status-badge.error {
+      background: #ffebee;
+      color: #c62828;
+    }
+    
+    /* Issues Badge */
+    .issues-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      background: #fff3cd;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #856404;
+      font-weight: 500;
+    }
+    
+    /* Action Buttons */
+    .actions-cell {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    
+    .btn {
+      padding: 6px 12px;
+      border: 1px solid #d0d0d0;
+      background: white;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      color: #333;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    .btn:hover {
+      background: #f5f5f5;
+      border-color: #999;
+    }
+    
+    .btn.primary {
+      background: #1a1a1a;
+      color: white;
+      border-color: #1a1a1a;
+    }
+    
+    .btn.primary:hover {
+      background: #333;
+    }
+    
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    /* Loading */
+    .loading {
+      text-align: center;
+      padding: 60px 20px;
+      color: #999;
+    }
+    
+    .spinner {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      border: 3px solid #f0f0f0;
+      border-top-color: #666;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 12px;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    /* Empty State */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #999;
+    }
+    
+    .empty-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+      opacity: 0.3;
+    }
+    
+    .empty-text {
+      font-size: 16px;
+      font-weight: 500;
+      color: #666;
+      margin-bottom: 8px;
+    }
+    
+    .empty-subtext {
+      font-size: 14px;
+      color: #999;
+    }
+    
+    /* Error */
+    .error-message {
+      background: #ffebee;
+      border: 1px solid #ef5350;
+      color: #c62828;
+      padding: 16px 20px;
+      border-radius: 6px;
+      margin: 20px 0;
+    }
+    
+    /* Responsive */
+    @media (max-width: 1200px) {
+      .kpi-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    
+    @media (max-width: 768px) {
+      .container {
+        padding: 16px;
+      }
+      
+      .header-content {
+        padding: 0 16px;
+        flex-direction: column;
+        gap: 16px;
+      }
+      
+      .header-actions {
+        width: 100%;
+        flex-direction: column;
+      }
+      
+      .search-input {
+        width: 100%;
+      }
+      
+      .kpi-grid {
+        grid-template-columns: 1fr;
+      }
+      
+      .services-table {
+        font-size: 13px;
+      }
+      
+      .services-table th,
+      .services-table td {
+        padding: 12px;
+      }
+      
+      .actions-cell {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      
+      .btn {
+        justify-content: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/javascript">
+    (function(){
+      const e = React.createElement;
+      
+      // Format timestamp
+      function formatTimestamp(timestamp) {
+        if (!timestamp) return 'Never';
+        
+        const date = new Date(timestamp);
+        
+        // Format as YYYY-MM-DD HH:mm:ss
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      }
+      
+      // KPI Card Component
+      function KPICard({icon, title, value, subtitle}) {
+        return e('div', {className: 'kpi-card'}, [
+          e('div', {key: 'header', className: 'kpi-header'}, [
+            e('span', {key: 'icon', className: 'kpi-icon'}, icon),
+            e('span', {key: 'title', className: 'kpi-title'}, title)
+          ]),
+          e('div', {key: 'value', className: 'kpi-value'}, value),
+          subtitle && e('div', {key: 'subtitle', className: 'kpi-subtitle'}, subtitle)
+        ]);
+      }
+      
+      // Service Row Component
+      function ServiceRow({service, onAnalyze, analyzingId}) {
+        const isAnalyzing = analyzingId === service.id;
+        const [certifications, setCertifications] = React.useState({});
+        const [loading, setLoading] = React.useState(true);
+        
+        // Load certification status for all environments
+        React.useEffect(() => {
+          const loadCertifications = async () => {
+            const environments = service.environments || [];
+            const certData = {};
+            
+            for (const env of environments) {
+              try {
+                const response = await fetch(`/api/services/${service.id}/validate-golden/${env}`);
+                const data = await response.json();
+                certData[env] = data.golden_exists;
+              } catch (err) {
+                certData[env] = false;
+              }
+            }
+            
+            setCertifications(certData);
+            setLoading(false);
+          };
+          
+          loadCertifications();
+        }, [service.id, service.environments]);
+        
+        const handleRowClick = () => {
+          // Go to branch-environment page with Drift Analysis tab
+          window.location.href = `/branch-environment?id=${service.id}&tab=deployment`;
+        };
+        
+        const handleAnalyze = (e) => {
+          e.stopPropagation();
+          onAnalyze(service.id);
+        };
+        
+        const handleView = (e) => {
+          e.stopPropagation();
+          // Go to branch-environment page with Drift Analysis tab
+          window.location.href = `/branch-environment?id=${service.id}&tab=deployment`;
+        };
+        
+        const handleBranchEnvironment = (e) => {
+          e.stopPropagation();
+          window.location.href = `/branch-environment?id=${service.id}`;  // ✅ Removed unnecessary file parameter
+        };
+        
+        const getEnvironmentDisplayName = (env) => {
+          const names = {
+            'prod': 'Production',
+            'dev': 'Development',
+            'qa': 'QA',
+            'staging': 'Staging',
+            'alpha': 'Alpha',
+            'beta1': 'Beta 1',
+            'beta2': 'Beta 2'
+          };
+          return names[env] || env.charAt(0).toUpperCase() + env.slice(1);
+        };
+        
+        // Get status badge configuration
+        const getStatusBadge = (status) => {
+          const configs = {
+            'critical': {
+              text: 'Critical',
+              icon: '🔴',
+              bgColor: '#fee',
+              textColor: '#c00',
+              borderColor: '#fcc'
+            },
+            'warning': {
+              text: 'Warning',
+              icon: '🟡',
+              bgColor: '#fff3cd',
+              textColor: '#856404',
+              borderColor: '#ffc107'
+            },
+            'healthy': {
+              text: 'Healthy',
+              icon: '✅',
+              bgColor: '#d4edda',
+              textColor: '#155724',
+              borderColor: '#c3e6cb'
+            }
+          };
+          return configs[status] || configs['healthy'];
+        };
+        
+        const statusBadge = getStatusBadge(service.status);
+        
+        return e('tr', {}, [  // ✅ Removed onClick - row is not clickable anymore
+          e('td', {key: 'service'}, 
+            e('div', {className: 'service-name'}, service.name)
+          ),
+          e('td', {key: 'env'}, 
+            loading ? e('span', {style: {color: '#999'}}, 'Loading...') :
+            e('div', {style: {display: 'flex', flexDirection: 'column', gap: '4px'}}, 
+              (service.environments || []).map(env => 
+                certifications[env] ? 
+                  e('div', {key: env, style: {display: 'flex', alignItems: 'center', gap: '8px'}}, [
+                    e('span', {style: {fontSize: '12px'}}, getEnvironmentDisplayName(env)),
+                    e('span', {style: {color: '#059669', fontSize: '14px'}}, '✓')
+                  ]) :
+                  null
+              )
+            )
+          ),
+          e('td', {key: 'status'}, 
+            e('span', {
+              style: {
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: '600',
+                backgroundColor: statusBadge.bgColor,
+                color: statusBadge.textColor,
+                border: `1px solid ${statusBadge.borderColor}`
+              }
+            }, [
+              e('span', {key: 'icon'}, statusBadge.icon),
+              e('span', {key: 'text'}, statusBadge.text)
+            ])
+          ),
+          e('td', {key: 'check'}, formatTimestamp(service.last_check)),
+          e('td', {key: 'issues'}, 
+            service.issues > 0 ? 
+              e('span', {className: 'issues-badge'}, [
+                e('span', {key: 'icon'}, '⚠'),
+                e('span', {key: 'text'}, `${service.issues} Drift`)
+              ]) : 
+              e('span', {style: {color: '#999'}}, '—')
+          ),
+          e('td', {key: 'actions'}, 
+            e('div', {className: 'actions-cell'}, [
+              e('button', {
+                key: 'more',
+                className: 'btn',
+                onClick: handleBranchEnvironment
+              }, 'More')
+            ])
+          )
+        ]);
+      }
+      
+      // Main App Component
+      function App() {
+        const [services, setServices] = React.useState([]);
+        const [loading, setLoading] = React.useState(true);
+        const [error, setError] = React.useState(null);
+        const [searchTerm, setSearchTerm] = React.useState('');
+        const [analyzingId, setAnalyzingId] = React.useState(null);
+        const [kpis, setKpis] = React.useState({
+          totalServices: 0,
+          activeIssues: 0
+        });
+        
+        // Load services
+        const loadServices = React.useCallback(async () => {
+          try {
+            const response = await fetch('/api/services');
+            const data = await response.json();
+            
+            if (!response.ok) {
+              throw new Error(data.detail || 'Failed to load services');
+            }
+            
+            setServices(data.services || []);
+            
+            setKpis({
+              totalServices: data.total_services || 0,
+              activeIssues: data.active_issues || 0
+            });
+            
+            setLoading(false);
+          } catch (err) {
+            setError(err.message);
+            setLoading(false);
+          }
+        }, []);
+        
+        // Analyze service
+        const analyzeService = React.useCallback(async (serviceId) => {
+          try {
+            setAnalyzingId(serviceId);
+            
+            const response = await fetch(`/api/services/${serviceId}/analyze`, {
+              method: 'POST'
+            });
+            
+            if (!response.ok) {
+              throw new Error('Analysis failed');
+            }
+            
+            setTimeout(() => {
+              // Navigate to branch-environment page with Drift Analysis tab
+              window.location.href = `/branch-environment?id=${serviceId}&tab=deployment`;
+            }, 1000);
+            
+          } catch (err) {
+            alert('Analysis failed: ' + err.message);
+            setAnalyzingId(null);
+          }
+        }, []);
+        
+        // Load on mount and set auto-refresh
+        React.useEffect(() => {
+          loadServices();
+          const interval = setInterval(loadServices, 30000);
+          return () => clearInterval(interval);
+        }, [loadServices]);
+        
+        // Filter services
+        const filteredServices = React.useMemo(() => {
+          if (!searchTerm) return services;
+          const term = searchTerm.toLowerCase();
+          return services.filter(s => 
+            s.name.toLowerCase().includes(term) || 
+            s.id.toLowerCase().includes(term)
+          );
+        }, [services, searchTerm]);
+        
+        return e('div', null, [
+          // Header
+          e('div', {key: 'header', className: 'header'}, 
+            e('div', {className: 'header-content'}, [
+              e('h1', {key: 'title', className: 'header-title'}, 'Golden Config AI Agent'),
+              e('div', {key: 'actions', className: 'header-actions'}, [
+                e('input', {
+                  key: 'search',
+                  type: 'text',
+                  className: 'search-input',
+                  placeholder: 'Search services...',
+                  value: searchTerm,
+                  onChange: (ev) => setSearchTerm(ev.target.value)
+                }),
+                e('button', {
+                  key: 'refresh',
+                  className: 'btn',
+                  onClick: loadServices
+                }, '🔄 Refresh')
+              ])
+            ])
+          ),
+          
+          // Container
+          e('div', {key: 'container', className: 'container'}, [
+            // KPIs
+            e('div', {key: 'kpis', className: 'kpi-grid'}, [
+              e(KPICard, {
+                key: '1',
+                icon: '📊',
+                title: 'Total Services',
+                value: kpis.totalServices,
+                subtitle: ''  // Removed fake trend text
+              }),
+              e(KPICard, {
+                key: '2',
+                icon: '⚠️',
+                title: 'Active Issues',
+                value: kpis.activeIssues,
+                subtitle: ''  // Removed fake trend text
+              })
+            ]),
+            
+            // Services Section
+            e('div', {key: 'services'}, [
+              e('div', {key: 'header', className: 'section-header'}, [
+                e('h2', {key: 'title', className: 'section-title'}, 'Services Overview'),
+                e('button', {
+                  key: 'refresh',
+                  className: 'btn',
+                  onClick: loadServices
+                }, '🔄 Refresh All')
+              ]),
+              
+              // Services Table
+              e('div', {key: 'table', className: 'services-container'}, [
+                loading && e('div', {key: 'loading', className: 'loading'}, [
+                  e('div', {key: 'spinner', className: 'spinner'}),
+                  e('div', {key: 'text'}, 'Loading services...')
+                ]),
+                
+                error && e('div', {key: 'error', className: 'error-message'}, error),
+                
+                !loading && !error && filteredServices.length === 0 && 
+                  e('div', {key: 'empty', className: 'empty-state'}, [
+                    e('div', {key: 'icon', className: 'empty-icon'}, '📋'),
+                    e('div', {key: 'text', className: 'empty-text'}, 
+                      searchTerm ? 'No services found' : 'No services configured'),
+                    e('div', {key: 'subtext', className: 'empty-subtext'}, 
+                      searchTerm ? 'Try a different search' : 'Add services to get started')
+                  ]),
+                
+                !loading && !error && filteredServices.length > 0 && 
+                  e('table', {key: 'table', className: 'services-table'}, [
+                    e('thead', {key: 'head'}, 
+                      e('tr', null, [
+                        e('th', {key: '1'}, 'Service'),
+                        e('th', {key: '2'}, 'Environment'),
+                        e('th', {key: '3'}, 'Status'),
+                        e('th', {key: '4'}, 'Last Check'),
+                        e('th', {key: '5'}, 'Issues'),
+                        e('th', {key: '6'}, 'Actions')
+                      ])
+                    ),
+                    e('tbody', {key: 'body'}, 
+                      filteredServices.map(service => 
+                        e(ServiceRow, {
+                          key: service.id,
+                          service: service,
+                          onAnalyze: analyzeService,
+                          analyzingId: analyzingId
+                        })
+                      )
+                    )
+                  ])
+              ])
+            ])
+          ])
+        ]);
+      }
+      
+      ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+    })();
+  </script>
+</body>
+</html>

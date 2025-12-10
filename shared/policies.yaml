@@ -1,0 +1,357 @@
+ # ===================================================================
+# Configuration Drift Detection - Policy Rules
+# ===================================================================
+# This file defines organization-specific rules for drift detection.
+# 
+# Structure:
+# - env_allow_keys: Files/paths allowed to differ per environment
+# - invariants: Rules that must ALWAYS be enforced
+#
+# Policy Tags (set by drift.py):
+# - invariant_breach: Critical violation of rules below
+# - allowed_variance: Expected environment-specific difference
+# - suspect: Requires AI analysis to determine impact
+# ===================================================================
+
+# -------------------------------------------------------------------
+# Environment Allowlist
+# -------------------------------------------------------------------
+# Files and paths that are EXPECTED to differ between environments
+# (dev, staging, prod). Changes to these won't be flagged as drift.
+#
+# Use cases:
+# - Environment-specific config files
+# - Kubernetes overlays
+# - Helm value files
+# - Environment variable files
+# -------------------------------------------------------------------
+env_allow_keys:
+  # Spring Boot / Java Applications
+  - application-dev.yml
+  - application-dev.yaml
+  - application-staging.yml
+  - application-staging.yaml
+  - application-qa.yml
+  - application-qa.yaml
+  - application-test.yml
+  - application-test.yaml
+  
+  # Kubernetes / Kustomize
+  - kustomize/overlays/dev
+  - kustomize/overlays/staging
+  - kustomize/overlays/qa
+  - kustomize/overlays/test
+  - k8s/overlays/dev
+  - k8s/overlays/staging
+  
+  # Helm Charts
+  - values-dev.yaml
+  - values-staging.yaml
+  - values-qa.yaml
+  - values-test.yaml
+  - charts/**/values-dev.yaml
+  - charts/**/values-staging.yaml
+  
+  # Docker / Container Config
+  - docker-compose.dev.yml
+  - docker-compose.staging.yml
+  - .env.dev
+  - .env.staging
+  
+  # Terraform / IaC
+  - terraform/environments/dev
+  - terraform/environments/staging
+  - terraform/env/dev
+  - terraform/env/staging
+
+# -------------------------------------------------------------------
+# Invariant Rules (ALWAYS Enforced)
+# -------------------------------------------------------------------
+# These are critical rules that must NEVER be violated.
+# If violated, changes will be tagged as "invariant_breach"
+# and blocked in production.
+#
+# Structure:
+# - name: Descriptive rule name
+# - locator_contains: Key/path pattern to match
+# - forbid_values: Values that are NOT allowed
+# - require_values: Values that ARE required (optional)
+# -------------------------------------------------------------------
+invariants:
+  # -------------------------
+  # Security Rules
+  # -------------------------
+  
+  - name: require_tls_in_production
+    description: SSL/TLS must be enabled in production
+    locator_contains: ssl.enabled
+    forbid_values: [false, "false", null, ""]
+    severity: critical
+    
+  - name: require_https_urls
+    description: Production URLs must use HTTPS
+    locator_contains: server.url
+    forbid_patterns:
+      - "^http://"  # Block HTTP URLs
+    severity: critical
+    
+  - name: require_security_headers
+    description: Security headers must be configured
+    locator_contains: security.headers
+    forbid_values: [null, false, "", "disabled"]
+    severity: high
+    
+  - name: actuator_must_be_protected
+    description: Spring Boot Actuator must not expose all endpoints
+    locator_contains: management.endpoints.web.exposure.include
+    forbid_values: ["*", "all"]
+    severity: high
+    
+  - name: cors_must_be_restricted
+    description: CORS must not allow all origins in production
+    locator_contains: cors.allowed-origins
+    forbid_values: ["*", "**"]
+    severity: high
+  
+  # -------------------------
+  # Database & Credentials
+  # -------------------------
+  
+  - name: no_hardcoded_passwords
+    description: Passwords must not be hardcoded
+    locator_contains: password
+    forbid_patterns:
+      - "^[^$].*"  # Must use ${VAR} or similar
+    allow_patterns:
+      - "^\\${.*}$"  # Allow ${ENV_VAR}
+      - "^\\*\\*\\*"  # Allow masked values
+    severity: critical
+    
+  - name: database_ssl_required
+    description: Database connections must use SSL
+    locator_contains: database.ssl
+    forbid_values: [false, "false", null]
+    severity: high
+    
+  - name: require_connection_encryption
+    description: All connections must be encrypted
+    locator_contains: encryption.enabled
+    forbid_values: [false, "false", null]
+    severity: high
+  
+  # -------------------------
+  # Authentication & Authorization
+  # -------------------------
+  
+  - name: authentication_required
+    description: Authentication must be enabled
+    locator_contains: authentication.enabled
+    forbid_values: [false, "false", null]
+    severity: critical
+    
+  - name: jwt_secret_must_be_configured
+    description: JWT secrets must be set
+    locator_contains: jwt.secret
+    forbid_values: [null, "", "changeme", "default"]
+    severity: critical
+    
+  - name: session_timeout_required
+    description: Session timeouts must be configured
+    locator_contains: session.timeout
+    forbid_values: [null, 0, -1]
+    severity: medium
+  
+  # -------------------------
+  # Logging & Monitoring
+  # -------------------------
+  
+  - name: audit_logging_required
+    description: Audit logging must be enabled in production
+    locator_contains: audit.logging.enabled
+    forbid_values: [false, "false", null]
+    severity: high
+    
+  - name: log_level_not_debug_in_prod
+    description: Production log level must not be DEBUG
+    locator_contains: logging.level
+    forbid_values: ["DEBUG", "TRACE"]
+    severity: medium
+    
+  - name: monitoring_endpoints_enabled
+    description: Health monitoring must be enabled
+    locator_contains: monitoring.enabled
+    forbid_values: [false, "false", null]
+    severity: medium
+  
+  # -------------------------
+  # Rate Limiting & Protection
+  # -------------------------
+  
+  - name: rate_limiting_enabled
+    description: Rate limiting must be configured
+    locator_contains: rate.limit.enabled
+    forbid_values: [false, "false", null]
+    severity: medium
+    
+  - name: ddos_protection_enabled
+    description: DDoS protection must be enabled
+    locator_contains: ddos.protection.enabled
+    forbid_values: [false, "false", null]
+    severity: high
+  
+  # -------------------------
+  # Infrastructure & Deployment
+  # -------------------------
+  
+  - name: resource_limits_required
+    description: Container resource limits must be set
+    locator_contains: resources.limits
+    forbid_values: [null, {}]
+    severity: medium
+    
+  - name: health_checks_required
+    description: Health check endpoints must be configured
+    locator_contains: health.check
+    forbid_values: [null, false, ""]
+    severity: medium
+    
+  - name: backup_enabled
+    description: Backups must be enabled
+    locator_contains: backup.enabled
+    forbid_values: [false, "false", null]
+    severity: high
+  
+  # -------------------------
+  # Compliance & Data Privacy
+  # -------------------------
+  
+  - name: data_retention_configured
+    description: Data retention policies must be set
+    locator_contains: data.retention
+    forbid_values: [null, 0, -1]
+    severity: medium
+    
+  - name: encryption_at_rest
+    description: Encryption at rest must be enabled
+    locator_contains: encryption.at-rest
+    forbid_values: [false, "false", null]
+    severity: critical
+    
+  - name: pii_protection_enabled
+    description: PII protection must be enabled
+    locator_contains: pii.protection
+    forbid_values: [false, "false", null]
+    severity: critical
+
+# -------------------------------------------------------------------
+# Semantic Versioning Rules
+# -------------------------------------------------------------------
+# How to handle dependency version changes
+# -------------------------------------------------------------------
+semver_rules:
+  # PATCH updates (1.0.0 → 1.0.1): Generally safe
+  patch:
+    verdict: NEW_BUILD_OK
+    severity: low
+    
+  # MINOR updates (1.0.0 → 1.1.0): Review recommended
+  minor:
+    verdict: DRIFT_WARN
+    severity: medium
+    require_review: true
+    
+  # MAJOR updates (1.0.0 → 2.0.0): Requires approval
+  major:
+    verdict: DRIFT_BLOCKING
+    severity: high
+    require_approval: true
+    require_testing: true
+
+# -------------------------------------------------------------------
+# Custom Rules by Environment
+# -------------------------------------------------------------------
+# Different strictness levels per environment
+# -------------------------------------------------------------------
+environment_rules:
+  production:
+    strictness: maximum
+    allow_experimental_features: false
+    require_approvals: true
+    
+  staging:
+    strictness: high
+    allow_experimental_features: true
+    require_approvals: false
+    
+  development:
+    strictness: medium
+    allow_experimental_features: true
+    require_approvals: false
+
+# -------------------------------------------------------------------
+# File Patterns to Monitor
+# -------------------------------------------------------------------
+# Specific file types that require extra scrutiny
+# -------------------------------------------------------------------
+monitored_patterns:
+  critical:
+    - "**/*secret*"
+    - "**/*credential*"
+    - "**/*password*"
+    - "**/*key*.pem"
+    - "**/*cert*"
+    
+  high_priority:
+    - "**/application*.yml"
+    - "**/application*.yaml"
+    - "**/application*.properties"
+    - "**/values*.yaml"
+    - "**/docker-compose*.yml"
+    
+  medium_priority:
+    - "**/pom.xml"
+    - "**/package.json"
+    - "**/requirements.txt"
+    - "**/go.mod"
+
+# -------------------------------------------------------------------
+# Exclusions
+# -------------------------------------------------------------------
+# Files/paths to completely ignore
+# -------------------------------------------------------------------
+exclusions:
+  # Generated files
+  - "**/*.generated.*"
+  - "**/target/**"
+  - "**/build/**"
+  - "**/dist/**"
+  - "**/.gradle/**"
+  
+  # IDE files
+  - "**/.idea/**"
+  - "**/.vscode/**"
+  - "**/*.iml"
+  
+  # Test files
+  - "**/test/**"
+  - "**/*test*.yml"
+  - "**/*test*.yaml"
+  
+  # Documentation
+  - "**/*.md"
+  - "**/docs/**"
+
+# -------------------------------------------------------------------
+# Notes for Customization
+# -------------------------------------------------------------------
+# 1. Add your organization-specific rules to the 'invariants' section
+# 2. Update 'env_allow_keys' with your environment-specific files
+# 3. Adjust 'semver_rules' based on your change management policy
+# 4. Modify 'environment_rules' to match your deployment pipeline
+# 5. Add critical file patterns to 'monitored_patterns'
+#
+# To test your policies:
+# - Run drift analysis on known-good configuration
+# - Verify that violations are caught correctly
+# - Ensure environment-specific files are not flagged
+# -------------------------------------------------------------------

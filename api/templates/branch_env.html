@@ -1,0 +1,2300 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Branch & Environment Tracking - Golden Config AI</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <style>
+    :root{
+      --vz-red:#B91C1C; --med:#D97706; --low:#4B5563; --allowed: #6B7280;
+      --ink:#111827; --muted:#6B7280; --bg:#F9FAFB;
+      --panel:#FFFFFF; --line:#E5E7EB; --chip:#F3F4F6;
+      --shadow:0 4px 6px -1px rgba(0,0,0,.07), 0 2px 4px -2px rgba(0,0,0,.07);
+      --success: #059669; --success-bg: #ECFDF5;
+      --green: #059669; --green-bg: #ECFDF5;
+      --yellow: #6B7280; --yellow-bg: #F3F4F6;
+      --red: #6B7280; --red-bg: #F3F4F6;
+    }
+    *{box-sizing:border-box}
+    html,body,#root{height:100%}
+    body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+
+    .container{max-width:1400px;margin:0 auto;padding:24px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:24px;width:100%;max-width:100%;box-sizing:border-box;overflow:hidden;}
+    .btn{border:1px solid #D1D5DB;background:#FFFFFF;color:#374151;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:all 0.2s;}
+    .btn:hover{background-color:#F9FAFB;}
+    .btn.primary{background: #4B5563; color: white; border-color: #4B5563;}
+    .btn.success{background: #4B5563; color: white; border-color: #4B5563;}
+    .btn.warning{background: #6B7280; color: white; border-color: #6B7280;}
+    .btn.danger{background: #6B7280; color: white; border-color: #6B7280;}
+    
+    .header{margin-bottom:32px}
+    .back-btn{margin-bottom:16px}
+    .title{font-size:24px;font-weight:700;margin:0 0 8px 0;display:flex;align-items:center;gap:12px}
+    .drift-title{font-weight:500; font-size: 14px; line-height: 1.4;}
+    .chip{display:inline-block; background:var(--chip);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;font-weight:500;}
+    .subtitle{color:var(--muted);margin:0}
+    
+    .issue-alert{background:var(--red-bg);border:2px solid var(--red);border-radius:12px;padding:16px;margin-bottom:24px}
+    .issue-alert h3{color:var(--red);margin:0 0 8px 0;font-size:18px}
+    .issue-alert p{margin:0;color:#7F1D1D}
+    
+    .tabs{display:flex;background:var(--chip);border-radius:12px;padding:4px;margin-bottom:24px}
+    .tab{flex:1;padding:12px 24px;border-radius:8px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.2s}
+    .tab.active{background:var(--panel);box-shadow:var(--shadow)}
+    
+    .grid{display:grid;gap:24px}
+    .grid-2{grid-template-columns:1fr 1fr}
+    .grid-4{grid-template-columns:repeat(4,1fr)}
+    
+    .status-item{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    .status-item:last-child{margin-bottom:0}
+    .status-label{color:var(--muted)}
+    .status-value{font-weight:600;display:flex;align-items:center;gap:8px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:13px}
+    
+    .badge{display:inline-flex;align-items:center;padding:6px 16px;border-radius:999px;font-size:12px;font-weight:700;gap:6px;cursor:pointer;transition:all 0.2s}
+    .badge:hover{transform:scale(1.05)}
+    .badge.success{background:var(--success-bg);color:var(--success);border:1px solid var(--success)}
+    .badge.warning{background:var(--yellow-bg);color:var(--yellow);border:1px solid var(--yellow)}
+    .badge.danger{background:var(--red-bg);color:var(--red);border:1px solid var(--red)}
+    .badge.production{background:var(--chip);color:var(--ink);border:1px solid var(--line)}
+    
+    .commit-item{padding:16px;border:1px solid var(--line);border-radius:12px;margin-bottom:12px}
+    .commit-item:last-child{margin-bottom:0}
+    .commit-hash{font-family:monospace;background:var(--chip);padding:4px 8px;border-radius:6px;font-size:12px}
+    .commit-meta{color:var(--muted);font-size:13px;margin-top:4px}
+    
+    .env-cert{display:block;padding:16px 0;border-bottom:1px solid var(--line)}
+    .env-cert:last-child{border-bottom:none}
+    .env-name{font-weight:600;font-size:16px}
+    .env-details{color:var(--muted);font-size:13px;margin-top:4px}
+    
+    .deployment-actions{margin-top:12px;display:flex;gap:8px}
+    
+    /* Drift Analysis Tab Styles (from index.html) */
+    .stats{display:grid;grid-template-columns:repeat(7,1fr);gap:12px}
+    .stat{text-align:center;padding:20px 16px;min-height:100px;display:flex;flex-direction:column;justify-content:center}
+    .stat .val{font-size:28px;font-weight:700;line-height:1.1;margin-bottom:4px}
+    .stat .lbl{font-size:14px;color:var(--muted);font-weight:600;line-height:1.2}
+    .stat.clickable{transition: all 0.2s ease; transform: scale(1); cursor:pointer;}
+    .stat.clickable:hover{transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.15);}
+    
+    .issue-card{padding: 0; width: 100%; max-width: 100%; overflow: hidden;}
+    .issue-header{display:flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px; cursor: pointer; border-radius: 16px; transition: background-color 0.2s;}
+    .issue-header:hover{background-color: #FAFAFA;}
+    .issue-summary{flex: 1; min-width: 0; overflow: hidden;}
+    .issue-details{padding: 16px; display: flex; flex-direction: column; gap: 16px; border-top: 1px solid var(--line); max-width: 100%; overflow: hidden;}
+    .details-actions{display: flex; justify-content: flex-end; gap: 8px;}
+    
+    .issue-meta{display: flex; flex-wrap: wrap; align-items:center; gap:8px; margin-top: 8px;}
+    .churn-pill{font-weight: 600; font-size: 12px;}
+    .churn-pill .add{color: #00796B;}
+    .churn-pill .del{color: #C62828;}
+    
+    .pii-notice { color: #B45309; background: #FFFBEB; border-color: #FDE68A; }
+    
+    .insight-card{background: #FEFCE8; border-left: 4px solid #FBBF24; padding: 12px; border-radius: 8px;}
+    .insight-card .heading{font-weight: 700; font-size: 1em; color: #92400E; margin-bottom: 4px;}
+    
+    .diff-view{border:1px solid var(--line);border-radius:12px;max-height:350px;overflow:auto;}
+    .diff-line{padding: 4px 12px; white-space:pre-wrap; border-left: 3px solid transparent; font-family:monospace; font-size:13px;}
+    .diff-line.hdr{background:#F3F4F6; color: var(--muted); font-style: italic;}
+    .diff-line.add{background:#E0F2F1; border-left-color: #00796B;}
+    .diff-line.del{background:#FFEBEE; border-left-color: #C62828;}
+    
+    .toggle-btn{
+        background: var(--chip);
+        border: 1px solid var(--line);
+        color: var(--muted);
+        cursor: pointer;
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        font-size: 20px;
+        line-height: 26px;
+        text-align: center;
+        transition: background-color 0.2s, transform 0.2s;
+        font-weight: 500;
+    }
+    .toggle-btn:hover{ background-color: #E5E7EB; }
+    .toggle-btn.open{ transform: rotate(45deg); }
+    
+    .grid-issues{display:grid;gap:16px;width:100%;max-width:100%;overflow:hidden;}
+    .section-title{font-size: 1.5em; font-weight: 700; margin-bottom: 16px; padding-bottom: 8px;}
+    .success-banner{background:#ECFDF5;border:1px solid #059669;color:#065F46;padding:16px;border-radius:12px;margin-bottom:16px;}
+    .spinner{display:inline-block;width:40px;height:40px;border:4px solid var(--line);border-top-color:var(--vz-red);border-radius:50%;animation:spin 1s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    
+    /* Modal styles */
+    .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000}
+    .modal{background:white;border-radius:16px;padding:24px;max-width:500px;width:90%;box-shadow:var(--shadow)}
+    .modal h3{margin:0 0 16px 0;color:var(--ink)}
+    .modal p{margin:0 0 16px 0;color:var(--muted)}
+    .modal-actions{display:flex;gap:8px;justify-content:flex-end}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/javascript">
+    (function(){
+      const e = React.createElement;
+      
+      // ✅ Helper function to extract and format timestamp from branch name
+      function formatBranchTimestamp(branchName) {
+        if (!branchName || branchName === 'None' || branchName === 'N/A') {
+          return 'N/A';
+        }
+        
+        // Extract timestamp from branch name format: golden_prod_20251017_143052
+        const match = branchName.match(/_(\d{8})_(\d{6})/);
+        if (!match) return 'Unknown';
+        
+        const dateStr = match[1]; // 20251017
+        const timeStr = match[2]; // 143052
+        
+        // Parse components
+        const year = dateStr.substring(0, 4);
+        const month = dateStr.substring(4, 6);
+        const day = dateStr.substring(6, 8);
+        const hours = timeStr.substring(0, 2);
+        const minutes = timeStr.substring(2, 4);
+        const seconds = timeStr.substring(4, 6);
+        
+        // Create date object
+        const date = new Date(`${year}-${month}-${day}T${hours}:${minutes}:${seconds}Z`);
+        
+        // Format as readable string
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const monthName = months[date.getMonth()];
+        const dayNum = date.getDate();
+        const yearNum = date.getFullYear();
+        
+        // Convert to 12-hour format
+        let hour = date.getHours();
+        const ampm = hour >= 12 ? 'PM' : 'AM';
+        hour = hour % 12 || 12;
+        const min = date.getMinutes().toString().padStart(2, '0');
+        
+        return `${monthName} ${dayNum}, ${yearNum} ${hour}:${min} ${ampm}`;
+      }
+      
+      function BranchEnvironmentPage() {
+        // Get URL parameters first to determine initial tab
+        const urlParams = new URLSearchParams(window.location.search);
+        const serviceId = urlParams.get('id') || 'unknown';
+        const tabParam = urlParams.get('tab') || 'overview';  // Support ?tab=deployment parameter
+        const runId = urlParams.get('run_id');  // ✅ Support ?run_id parameter for viewing specific runs
+        
+        const [activeTab, setActiveTab] = React.useState(tabParam);
+        const [showStagingModal, setShowStagingModal] = React.useState(false);
+        const [showRecertifyModal, setShowRecertifyModal] = React.useState(false);  // ✅ Re-certify confirmation dialog
+        const [selectedEnvForRecertify, setSelectedEnvForRecertify] = React.useState(null);  // ✅ Track which env to re-certify
+        const [currentEnvironmentForAnalysis, setCurrentEnvironmentForAnalysis] = React.useState('prod');  // ✅ Track environment for analysis
+        const [serviceConfig, setServiceConfig] = React.useState(null);
+        const [certificationUpdateTrigger, setCertificationUpdateTrigger] = React.useState(0);
+        const [triggerAnalysis, setTriggerAnalysis] = React.useState(0);  // ✅ Counter to trigger analysis
+        const [persistedDriftData, setPersistedDriftData] = React.useState(null);  // ✅ Persist drift data across tab switches
+        const [persistedHasRunAnalysis, setPersistedHasRunAnalysis] = React.useState(false);  // ✅ Persist analysis flag
+        
+        // ✅ Auto-switch to Drift Analysis tab if run_id is provided
+        React.useEffect(() => {
+          if (runId) {
+            setActiveTab('deployment');
+          }
+        }, [runId]);
+        
+        // Note: Removed 'file' parameter as it was unused placeholder code
+        
+        // Load service configuration
+        React.useEffect(() => {
+          const loadServiceConfig = async () => {
+            try {
+              const servicesResponse = await fetch('/api/services');
+              const servicesData = await servicesResponse.json();
+              const service = servicesData.services.find(s => s.id === serviceId);
+              setServiceConfig(service);
+            } catch (err) {
+              console.error('Failed to load service config:', err);
+            }
+          };
+          loadServiceConfig();
+        }, [serviceId]);
+        
+        // Mock issue data - in real app, this would be fetched from API
+        const issueData = {
+          id: serviceId,
+          riskLevel: 'high', // Could be high, medium, low, allowed
+          description: `Configuration drift detected for ${serviceConfig?.name || serviceId}`,
+          affectedEnvironments: ['production', 'staging'],
+          currentBranch: 'main',
+          deployedBranch: 'main',
+          lastCommit: 'a1b2c3d4'
+        };
+        
+        function goBack() {
+          window.history.back();
+        }
+        
+        function handleStagingClick() {
+          setShowStagingModal(true);
+        }
+        
+        // ✅ Handle re-certify button click - show confirmation dialog
+        function handleRecertifyClick(env) {
+          setSelectedEnvForRecertify(env);
+          setShowRecertifyModal(true);
+        }
+        
+        // ✅ Handle re-certify confirmation - run analysis and switch to drift tab
+        function handleRecertifyConfirm() {
+          setShowRecertifyModal(false);
+          setCurrentEnvironmentForAnalysis(selectedEnvForRecertify);  // ✅ Set the environment for analysis
+          setActiveTab('deployment');  // Switch to Drift Analysis tab
+          setTriggerAnalysis(prev => prev + 1);  // Trigger analysis
+          setSelectedEnvForRecertify(null);
+        }
+        
+        // ✅ Handle re-certify cancellation
+        function handleRecertifyCancel() {
+          setShowRecertifyModal(false);
+          setSelectedEnvForRecertify(null);
+        }
+        
+        function handlePromoteToStaging() {
+          alert('Promoting changes to staging environment...');
+          setShowStagingModal(false);
+        }
+        
+        function handleReviewStaging() {
+          alert('Opening staging review workflow...');
+          setShowStagingModal(false);
+        }
+        
+        function triggerCertificationUpdate() {
+          setCertificationUpdateTrigger(prev => prev + 1);
+        }
+        
+        return e('div', {className: 'container'}, [
+          // Header
+          e('div', {className: 'header'}, [
+            e('div', {style: {marginBottom: '16px'}}, [
+            e('button', {className: 'btn back-btn', onClick: goBack}, [
+              e('span', null, '←'),
+              'Back to Issues'
+              ])
+            ]),
+            e('div', {style: {display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}, [
+              e('div', null, [
+                e('h1', {className: 'title', style: {marginBottom: '8px'}}, [
+                  e('span', null, '⚙'),
+                  `Branch & Environment - ${serviceConfig?.name || 'Service'}`
+                ]),
+                e('p', {className: 'subtitle'}, `Track git branches, deployments, and environment-specific certifications`)
+              ]),
+              e('button', {
+                className: 'btn',
+                onClick: () => {
+                  // Auto-switch to Drift Analysis tab and trigger analysis
+                  setActiveTab('deployment');
+                  setTriggerAnalysis(prev => prev + 1);  // ✅ Trigger analysis
+                  // Scroll to top for better UX
+                  window.scrollTo({top: 0, behavior: 'smooth'});
+                },
+                style: {marginLeft: '16px', backgroundColor: '#4B5563', color: 'white', border: '1px solid #4B5563'}
+              }, '▶️ Run Analysis')  // Updated label to reflect action
+            ])
+          ]),
+          
+          // Risk banner removed from Overview tab as requested
+          
+          // Tabs
+          e('div', {className: 'tabs'}, [
+            e('button', {
+              className: `tab ${activeTab === 'overview' ? 'active' : ''}`,
+              onClick: () => setActiveTab('overview')
+            }, 'Overview'),
+            e('button', {
+              className: `tab ${activeTab === 'certifications' ? 'active' : ''}`,
+              onClick: () => setActiveTab('certifications')
+            }, 'Certifications'),
+            e('button', {
+              className: `tab ${activeTab === 'deployment' ? 'active' : ''}`,
+              onClick: () => setActiveTab('deployment')
+            }, 'Drift Analysis'),
+            e('button', {
+              className: `tab ${activeTab === 'history' ? 'active' : ''}`,
+              onClick: () => setActiveTab('history')
+            }, 'Analysis History')
+          ]),
+          
+          // Tab Content (reordered to match tab order)
+          activeTab === 'overview' && e(OverviewTab, {issueData, onStagingClick: handleStagingClick, serviceConfig, serviceId, certificationUpdateTrigger}),
+          activeTab === 'certifications' && e(CertificationsTab, {issueData, onStagingClick: handleStagingClick, onRecertifyClick: handleRecertifyClick, serviceConfig, serviceId, onCertificationUpdate: triggerCertificationUpdate}),
+          activeTab === 'deployment' && e(DeploymentTab, {serviceId, currentEnvironment: currentEnvironmentForAnalysis, triggerAnalysis, runId, persistedDriftData, setPersistedDriftData, persistedHasRunAnalysis, setPersistedHasRunAnalysis, serviceConfig}),
+          activeTab === 'history' && e(HistoryTab, {serviceId, currentEnvironment: 'prod'}),
+          
+          // Staging Modal
+          showStagingModal && e(StagingModal, {
+            onClose: () => setShowStagingModal(false),
+            onPromote: handlePromoteToStaging,
+            onReview: handleReviewStaging,
+            issueData
+          }),
+          
+          // ✅ Re-certify Confirmation Modal
+          showRecertifyModal && e(RecertifyModal, {
+            onClose: handleRecertifyCancel,
+            onConfirm: handleRecertifyConfirm,
+            environment: selectedEnvForRecertify
+          })
+        ]);
+      }
+      
+      function OverviewTab({issueData, onStagingClick, serviceConfig, serviceId, certificationUpdateTrigger}) {
+        const [branchStatus, setBranchStatus] = React.useState({});
+        const [loading, setLoading] = React.useState(true);
+        const [error, setError] = React.useState(null);
+        const [selectedEnv, setSelectedEnv] = React.useState(null);
+        const [showBranchDetails, setShowBranchDetails] = React.useState(false);
+        
+        // Load branch status for all environments
+        React.useEffect(() => {
+          const loadBranchData = async () => {
+            if (!serviceConfig) return;
+            
+            try {
+              // Get environments from service configuration (no hardcoded values)
+              const environments = serviceConfig?.environments || ['prod', 'dev', 'qa', 'staging'];
+              
+              // Load branch status for all environments
+              const statusData = {};
+              for (const env of environments) {
+                try {
+                  const response = await fetch(`/api/services/${serviceId}/branches/${env}`);
+                  const data = await response.json();
+                  statusData[env] = data;
+                } catch (err) {
+                  statusData[env] = { error: err.message };
+                }
+              }
+              setBranchStatus(statusData);
+              
+            } catch (err) {
+              setError(`Failed to load data: ${err.message}`);
+            } finally {
+              setLoading(false);
+            }
+          };
+          loadBranchData();
+        }, [serviceConfig, serviceId, certificationUpdateTrigger]);
+        
+        const handleEnvClick = (env) => {
+          const status = branchStatus[env];
+          if (status && status.active_golden_branch) {
+            setSelectedEnv(env);
+            setShowBranchDetails(true);
+          }
+        };
+        
+        const closeBranchDetails = () => {
+          setShowBranchDetails(false);
+          setSelectedEnv(null);
+        };
+        
+        const getEnvironmentDisplayName = (env) => {
+          const names = {
+            'prod': 'Production',
+            'dev': 'Development', 
+            'qa': 'QA',
+            'staging': 'Staging'
+          };
+          return names[env] || env;
+        };
+        
+        const getEnvironmentColor = (env) => {
+          const colors = {
+            'prod': 'var(--ink)',
+            'dev': 'var(--ink)',
+            'qa': 'var(--ink)', 
+            'staging': 'var(--ink)'
+          };
+          return colors[env] || 'var(--muted)';
+        };
+        
+        return e('div', {className: 'grid grid-2'}, [
+          // Service Overview Card (moved to left)
+          e('div', {className: 'card'}, [
+            e('h3', {style: {margin: '0 0 20px 0', fontSize: '18px'}}, 'Service Overview'),
+            
+            error ? e('div', {style: {color: 'var(--red)', padding: '12px', background: 'var(--red-bg)', borderRadius: '8px', marginBottom: '16px'}}, 
+              `❌ ${error}`
+            ) : null,
+            
+            loading ? e('div', {style: {textAlign: 'center', padding: '20px', color: 'var(--muted)'}}, 'Loading service data...') :
+            serviceConfig ? [
+              e('div', {className: 'status-item'}, [
+                e('span', {className: 'status-label'}, 'Service:'),
+                e('div', {className: 'status-value'}, [
+                  e('span', null, '⚙'),
+                  e('span', {className: 'mono'}, serviceConfig.name || serviceId)
+                ])
+              ]),
+              e('div', {className: 'status-item'}, [
+                e('span', {className: 'status-label'}, 'Service ID:'),
+                e('div', {className: 'status-value'}, [
+                  e('span', null, 'ID'),
+                  e('span', {className: 'mono'}, serviceId)
+                ])
+              ]),
+              e('div', {className: 'status-item'}, [
+                e('span', {className: 'status-label'}, 'Main Branch:'),
+                e('div', {className: 'status-value'}, [
+                  e('span', null, 'BR'),
+                  e('span', {className: 'mono'}, serviceConfig.main_branch || 'main')
+              ])
+            ]),
+              e('div', {className: 'status-item'}, [
+                e('span', {className: 'status-label'}, 'Environments:'),
+                e('div', {className: 'status-value'}, [
+                  e('span', null, 'ENV'),
+                  e('span', null, `${serviceConfig.environments ? serviceConfig.environments.length : 0} configured`)
+                ])
+              ]),
+              e('div', {className: 'status-item'}, [
+                e('span', {className: 'status-label'}, 'Repository:'),
+                e('div', {className: 'status-value'}, [
+                  e('span', null, 'REPO'),
+                  e('span', {style: {fontSize: '12px', wordBreak: 'break-all'}}, serviceConfig.repo_url || 'Unknown')
+                ])
+              ]),
+              e('div', {className: 'status-item'}, [
+                e('span', {className: 'status-label'}, 'Status:'),
+                e('span', {className: serviceConfig.status === 'warning' ? 'badge warning' : 'badge success'}, 
+                  serviceConfig.status === 'warning' ? '⚠ Warning' : '✓ Active'
+                )
+              ])
+            ] : e('div', {style: {textAlign: 'center', padding: '20px', color: 'var(--muted)'}}, 'Service not found')
+          ]),
+          
+          // Environment Status Overview (moved to right)
+          e('div', {className: 'card'}, [
+            e('h3', {style: {margin: '0 0 20px 0', fontSize: '18px'}}, 'Environment Certification Status'),
+            
+            error ? e('div', {style: {color: 'var(--red)', padding: '12px', background: 'var(--red-bg)', borderRadius: '8px', marginBottom: '16px'}}, 
+              `❌ ${error}`
+            ) : null,
+            
+            loading ? e('div', {style: {textAlign: 'center', padding: '20px', color: 'var(--muted)'}}, 'Loading environment data...') :
+            (() => {
+              // Get environments from service config (dynamic, no hardcoded values)
+              const environments = serviceConfig?.environments || [];
+              
+              if (environments.length === 0) {
+                return e('div', {style: {textAlign: 'center', padding: '40px 20px', color: 'var(--muted)'}}, [
+                  e('div', {style: {fontSize: '48px', marginBottom: '16px'}}, '⚙'),
+                  e('div', {style: {fontSize: '16px', fontWeight: '600', marginBottom: '8px'}}, 'No Environments Configured'),
+                  e('div', {style: {fontSize: '14px'}}, 'Check service configuration')
+                ]);
+              }
+              
+              return environments.map(env => {
+                const status = branchStatus[env] || {};
+                const hasGolden = status.active_golden_branch;
+                const goldenCount = status.total_golden || 0;
+                const driftCount = status.total_drift || 0;
+                const isCertified = hasGolden;
+                
+                return e('div', {
+                  key: env, 
+                  className: 'env-cert',
+                  style: {cursor: isCertified ? 'pointer' : 'default', transition: 'all 0.2s'},
+                  onClick: () => isCertified && handleEnvClick(env)
+                }, [
+                  e('div', null, [
+                    e('div', {className: 'env-name', style: {color: getEnvironmentColor(env)}}, 
+                      getEnvironmentDisplayName(env)
+                    ),
+                    e('div', {className: 'env-details'}, 
+                      `Golden: ${hasGolden || 'None'}`
+                    ),
+                    isCertified && e('div', {className: 'env-details', style: {fontSize: '12px', color: '#666', marginTop: '2px'}}, 
+                      `Certified: ${formatBranchTimestamp(hasGolden)}`
+                    ),
+                    isCertified && e('div', {className: 'env-details', style: {color: 'var(--muted)', fontSize: '12px', marginTop: '4px'}}, 
+                      'Click to view details →'
+                    )
+                  ]),
+                  e('div', {style: {display: 'flex', alignItems: 'center', gap: '8px'}}, [
+                    isCertified && e('span', {className: 'badge success'}, [
+                      e('span', null, '✓'),
+                      'Certified'
+                    ]),
+                    // ✅ Show drift count badge for non-production environments (alpha, beta1, beta2)
+                    isCertified && env !== 'prod' && status.drift_count > 0 && e('span', {
+                      style: {
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '4px 10px',
+                        background: '#fff3cd',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        color: '#856404',
+                        fontWeight: '500'
+                      }
+                    }, [
+                      e('span', {key: 'icon'}, '⚠'),
+                      e('span', {key: 'text'}, `${status.drift_count} Drift`)
+                    ])
+                  ])
+                ]);
+              });
+            })()
+          ]),
+          
+          // Branch Details Popup
+          showBranchDetails && selectedEnv && e('div', {className: 'modal-overlay', onClick: closeBranchDetails}, [
+            e('div', {className: 'modal', onClick: (e) => e.stopPropagation()}, [
+              e('div', {style: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px'}}, [
+                e('h3', {style: {margin: 0, fontSize: '20px'}}, [
+                  e('span', {style: {marginRight: '8px'}}, '⚙'),
+                  `${getEnvironmentDisplayName(selectedEnv)} - Branch Details`
+                ]),
+                e('button', {
+                  onClick: closeBranchDetails,
+                  style: {background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: 'var(--muted)'}
+                }, '×')
+              ]),
+              
+              (() => {
+                const status = branchStatus[selectedEnv] || {};
+                const goldenBranch = status.active_golden_branch;
+                const goldenBranches = status.golden_branches || [];
+                const driftBranches = status.drift_branches || [];
+                const service = serviceConfig;
+                
+                if (!service) {
+                  return e('div', {style: {textAlign: 'center', padding: '20px', color: 'var(--muted)'}}, 'Service data not available');
+                }
+                
+                return [
+                  // Current Golden Branch
+                  e('div', {style: {marginBottom: '24px'}}, [
+                    e('h4', {style: {margin: '0 0 12px 0', color: 'var(--green)'}}, 'Active Golden Branch'),
+                    e('div', {style: {background: 'var(--green-bg)', padding: '16px', borderRadius: '8px', border: '1px solid var(--green)'}}, [
+                      e('div', {style: {fontFamily: 'monospace', fontSize: '14px', fontWeight: '600', marginBottom: '4px'}}, goldenBranch),
+                      e('div', {style: {fontSize: '12px', color: '#666', marginBottom: '12px'}}, 
+                        `Certified: ${formatBranchTimestamp(goldenBranch)}`
+                      ),
+                      e('div', {style: {display: 'flex', gap: '12px', alignItems: 'center'}}, [
+                        e('a', {
+                          href: `${service.repo_url.replace('.git', '')}/-/tree/${goldenBranch}`,
+                          target: '_blank',
+                          style: {color: 'var(--green)', textDecoration: 'none', fontWeight: '600'},
+                          onMouseOver: (e) => e.target.style.textDecoration = 'underline',
+                          onMouseOut: (e) => e.target.style.textDecoration = 'none'
+                        }, '🔗 View in GitLab'),
+                        e('span', {style: {color: 'var(--muted)', fontSize: '12px'}}, 'Opens in new tab')
+              ])
+                    ])
+                  ]),
+                  
+                  // Recent Branches
+                  e('div', {style: {marginBottom: '16px'}}, [
+                    e('h4', {style: {margin: '0 0 12px 0'}}, 'Recent Drift Branches'),
+                    driftBranches.length > 0 ? 
+                      e('div', {style: {maxHeight: '200px', overflowY: 'auto'}}, 
+                        driftBranches.slice(0, 5).map(branch => 
+                          e('div', {key: branch, style: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--line)'}}, [
+                            e('span', {style: {fontFamily: 'monospace', fontSize: '12px'}}, branch),
+                            e('a', {
+                              href: `${service.repo_url.replace('.git', '')}/-/tree/${branch}`,
+                              target: '_blank',
+                              style: {color: 'var(--med)', textDecoration: 'none', fontSize: '12px'},
+                              onMouseOver: (e) => e.target.style.textDecoration = 'underline',
+                              onMouseOut: (e) => e.target.style.textDecoration = 'none'
+                            }, 'View')
+                          ])
+                        )
+                      ) :
+                      e('div', {style: {color: 'var(--muted)', fontStyle: 'italic'}}, 'No drift branches yet')
+                  ])
+                ];
+              })()
+            ])
+          ])
+        ]);
+      }
+      
+      // ============================================================================
+      // DRIFT ANALYSIS TAB HELPER COMPONENTS (Copied from index.html)
+      // ============================================================================
+      
+      const MASKING_PATTERNS = [
+          { regex: /(PASSWORD|SECRET|KEY|TOKEN)\s*[:=]\s*([^\s]+)/gi, replacement: "$1: '********'" },
+          { regex: /(AES:)[^\s]+/gi, replacement: "$1********" }
+      ];
+
+      function maskPII(text) {
+          if (typeof text !== 'string') return '';
+          let maskedText = text;
+          MASKING_PATTERNS.forEach(({ regex, replacement }) => { maskedText = maskedText.replace(regex, replacement); });
+          return maskedText;
+      }
+
+      function hasPII(text) {
+          if (typeof text !== 'string') return false;
+          return MASKING_PATTERNS.some(({ regex }) => { regex.lastIndex = 0; return regex.test(text); });
+      }
+
+      function getChangeType(item) {
+        if (item.drift_category) return item.drift_category;
+        const { file, why = '' } = item;
+        if (why.includes('dependency')) return 'Dependency';
+        if (file.endsWith('.yml') || file.endsWith('.properties') || why.includes('connection string')) return 'Configuration';
+        if (file.endsWith('pom.xml') || file.startsWith('helm/')) return 'Build & Deployment';
+        if (why.includes('probe') || why.includes('security') || why.includes('password')) return 'Security & Health';
+        if (file.endsWith('.java')) return 'Code Logic';
+        return 'General';
+      }
+
+      function generateInsight(item) {
+          if (item.ai_review_assistant && item.ai_review_assistant.potential_risk && item.ai_review_assistant.suggested_action) {
+              return e('div', {className: 'insight-card'}, [
+                e('div', {className: 'heading'}, '💡 AI Review Assistant'),
+                e('p', {style: {margin: 0}}, [ 
+                  e('strong', null, 'Potential Risk: '), 
+                  maskPII(item.ai_review_assistant.potential_risk), 
+                  e('br'), 
+                  e('strong', null, 'Suggested Action: '), 
+                  maskPII(item.ai_review_assistant.suggested_action) 
+                ])
+              ]);
+          }
+          const { why = '', remediation = {} } = item;
+          if (why) {
+              const remediationText = remediation.snippet || 
+                                     (remediation.steps && Array.isArray(remediation.steps) 
+                                       ? remediation.steps.join('; ') 
+                                       : 'Review and verify this configuration change.');
+              return e('div', {className: 'insight-card'}, [
+                e('div', {className: 'heading'}, '💡 AI Review Assistant'),
+                e('p', {style: {margin: 0}}, [ 
+                  e('strong', null, 'Potential Risk: '), maskPII(why), 
+                  e('br'), 
+                  e('strong', null, 'Suggested Action: '), maskPII(remediationText) 
+                ])
+              ]);
+          }
+          return e('div', {className: 'insight-card'}, [
+            e('div', {className: 'heading'}, '💡 AI Review Assistant'),
+            e('p', {style: {margin: 0}}, [ 
+              e('strong', null, 'Potential Risk: '), 'N/A', 
+              e('br'), 
+              e('strong', null, 'Suggested Action: '), 'Review the change details below.' 
+            ])
+          ]);
+      }
+
+      const PIINotice = () => e('span', {className: 'chip pii-notice'}, '🔒 PII Masked');
+      
+      const LocatorPill = ({loc}) => {
+          if(!loc) return null;
+          let text = '';
+          if (loc.type === 'unidiff' && loc.old_start) { text = `Lines ${loc.old_start} → ${loc.new_start || loc.old_start}`; } 
+          else if (loc.line_start) { text = `Line ${loc.line_start}`; } 
+          else { text = loc.type || 'General'; }
+          return e('span',{className:'chip mono'}, text);
+      };
+
+      const Churn = ({ loc }) => {
+        if (loc.type !== 'unidiff' || loc.old_lines === undefined) return null;
+        const netChange = (loc.new_lines || 0) - (loc.old_lines || 0);
+        const additions = Math.max(0, netChange);
+        const deletions = Math.max(0, -netChange);
+        return e('span', {className: 'chip mono churn-pill'}, [ 
+          e('span', {className: 'add'}, `+${additions} `), 
+          e('span', {className: 'del'}, `-${deletions}`) 
+        ]);
+      };
+      
+      const CodeHunkIssue = ({ item }) => {
+        const uiPatch = React.useMemo(() => item.remediation?.patch_hint?.replace(/\\n/g, '\n') || '', [item]);
+        const lines = uiPatch.split('\n').filter(ln => !ln.startsWith('---') && !ln.startsWith('+++') && !ln.startsWith('diff --git'));
+        return e('div', {className: 'diff-view mono'}, lines.map((ln, i) => 
+          e('div', {
+            key: i, 
+            className: `diff-line ${ln.startsWith('@@')?'hdr':ln.startsWith('+')?'add':ln.startsWith('-')?'del':'ctx'}`
+          }, maskPII(ln))
+        ));
+      };
+
+      const ConfigChangeIssue = ({ item }) => {
+        const { old = null, new: newVal = null, remediation = {}, locator = {} } = item;
+        const elements = [];
+        
+        const showSmartDiff = () => {
+          const maskedOld = maskPII(String(old || ''));
+          const maskedNew = maskPII(String(newVal || ''));
+          
+          // Check if values are multi-line (contain newlines or are objects/arrays)
+          const isMultiLine = maskedOld.includes('\n') || maskedNew.includes('\n') || 
+                             maskedOld.length > 80 || maskedNew.length > 80;
+          
+          // Try to format JSON if it looks like JSON
+          const formatValue = (val) => {
+            try {
+              const parsed = JSON.parse(val);
+              return JSON.stringify(parsed, null, 2);
+            } catch {
+              return val;
+            }
+          };
+          
+          const formattedOld = formatValue(maskedOld);
+          const formattedNew = formatValue(maskedNew);
+          
+          // Split into lines for multi-line display
+          const oldLines = formattedOld.split('\n');
+          const newLines = formattedNew.split('\n');
+          
+          if (isMultiLine || oldLines.length > 1 || newLines.length > 1) {
+            // Multi-line diff with scroll
+            return e('div', { key: 'change', style: {width: '100%', overflow: 'hidden'} }, [
+              locator.value && e('div', { style: {marginBottom: '8px', color: '#666', fontSize: '13px', fontWeight: '600'} }, 
+                `📍 Changed field: ${locator.value}`
+              ),
+              e('div', { 
+                className: 'diff-view mono',
+                style: {
+                  maxHeight: '400px',
+                  maxWidth: '100%',
+                  overflowY: 'auto',
+                  overflowX: 'auto',
+                  border: '1px solid #e0e0e0',
+                  borderRadius: '6px',
+                  backgroundColor: '#f8f9fa',
+                  width: '100%'
+                }
+              }, [
+                // Old value section
+                maskedOld && e('div', { key: 'old-section', style: {borderBottom: '1px solid #e0e0e0', minWidth: 'fit-content'} }, [
+                  e('div', { 
+                    style: {
+                      backgroundColor: '#ffebee', 
+                      padding: '4px 12px', 
+                      fontWeight: '600', 
+                      fontSize: '12px',
+                      color: '#c62828',
+                      borderBottom: '1px solid #ffcdd2',
+                      position: 'sticky',
+                      top: 0,
+                      zIndex: 1
+                    } 
+                  }, '− Old Value'),
+                  ...oldLines.map((line, i) => 
+                    e('div', { 
+                      key: `old-${i}`, 
+                      className: 'diff-line del',
+                      style: {
+                        padding: '4px 12px',
+                        borderLeft: '3px solid #ef5350',
+                        whiteSpace: 'pre',
+                        overflowWrap: 'normal',
+                        wordBreak: 'normal',
+                        minWidth: 'fit-content'
+                      }
+                    }, line || ' ')
+                  )
+                ]),
+                // New value section
+                maskedNew && e('div', { key: 'new-section', style: {minWidth: 'fit-content'} }, [
+                  e('div', { 
+                    style: {
+                      backgroundColor: '#e8f5e9', 
+                      padding: '4px 12px', 
+                      fontWeight: '600', 
+                      fontSize: '12px',
+                      color: '#2e7d32',
+                      borderBottom: '1px solid #c8e6c9',
+                      position: 'sticky',
+                      top: 0,
+                      zIndex: 1
+                    } 
+                  }, '+ New Value'),
+                  ...newLines.map((line, i) => 
+                    e('div', { 
+                      key: `new-${i}`, 
+                      className: 'diff-line add',
+                      style: {
+                        padding: '4px 12px',
+                        borderLeft: '3px solid #66bb6a',
+                        whiteSpace: 'pre',
+                        overflowWrap: 'normal',
+                        wordBreak: 'normal',
+                        minWidth: 'fit-content'
+                      }
+                    }, line || ' ')
+                  )
+                ])
+              ].filter(Boolean))
+            ]);
+          } else {
+            // Single-line compact diff
+            return e('div', { key: 'change', className: 'diff-view mono' }, [
+              maskedOld && e('div', { key: 'old', className: 'diff-line del' }, `- ${maskedOld}`),
+              maskedNew && e('div', { key: 'new', className: 'diff-line add' }, `+ ${maskedNew}`)
+            ].filter(Boolean));
+          }
+        };
+        
+        if (old !== null || newVal !== null) {
+          elements.push(showSmartDiff());
+        }
+        
+        if (remediation.steps && Array.isArray(remediation.steps) && remediation.steps.length > 0) {
+          elements.push(
+            e('div', { key: 'steps', style: {marginTop: '12px'} }, [
+              e('strong', null, '🔧 Remediation Steps:'),
+              e('ol', { style: {margin: '8px 0', paddingLeft: '20px'} }, 
+                remediation.steps.map((step, i) => 
+                  e('li', {key: i, style: {marginBottom: '4px'}}, maskPII(step))
+                )
+              )
+            ])
+          );
+        }
+        
+        return e('div', null, elements);
+      };
+      
+      function Issue({item, bucket}) {
+        const [open, setOpen] = React.useState(false);
+        const patch = item.remediation?.patch_hint || '';
+        const itemContainsPII = React.useMemo(() => hasPII(item.why) || hasPII(item.remediation?.snippet) || hasPII(item.remediation?.patch_hint), [item]);
+
+        function downloadPatch(){ 
+          if(!patch) return; 
+          const blob=new Blob([patch],{type:'text/plain'}); 
+          const a=document.createElement('a'); 
+          a.href=URL.createObjectURL(blob); 
+          a.download=(item.id || 'issue')+'.patch'; 
+          a.click(); 
+          URL.revokeObjectURL(a.href); 
+        }
+        
+        function downloadJSON(){ 
+          const blob=new Blob([JSON.stringify(item,null,2)],{type:'application/json'}); 
+          const a=document.createElement('a'); 
+          a.href=URL.createObjectURL(blob); 
+          a.download=(item.id || 'issue')+'.json'; 
+          a.click(); 
+          URL.revokeObjectURL(a.href); 
+        }
+        
+        const DetailsView = item.remediation?.patch_hint ? CodeHunkIssue : item.remediation?.snippet ? ConfigChangeIssue : () => e('div', {className: 'muted'}, 'No detailed changes available.');
+        const riskVar = bucket === 'high' ? 'vz-red' : (bucket === 'medium' ? 'med' : 'low');
+
+        return e('div', {className: 'card issue-card'}, [
+            e('div', { className: 'issue-header', onClick: () => setOpen(!open) }, [
+                e('div', { className: 'issue-summary' }, [
+                    e('p', {className: 'drift-title'}, maskPII(item.why || item.headline)),
+                    e('div', {className: 'issue-meta'}, [
+                        e('span', {className:'chip', style:{backgroundColor: `var(--${riskVar})`, color: 'white'}}, String(bucket).toUpperCase()),
+                        e('span', {className: 'chip'}, getChangeType(item)),
+                        e(Churn, {loc: item.locator}),
+                        itemContainsPII && e(PIINotice),
+                        e('span', {className: 'mono muted'}, item.file)
+                    ]),
+                ]),
+                e('button', {className: `toggle-btn ${open ? 'open': ''}`}, '+')
+            ]),
+            open && e('div', { className: 'issue-details' }, [
+                generateInsight(item),
+                e(DetailsView, {item}),
+                e('div', {className: 'details-actions'}, [
+                    e('button', {className: 'btn', onClick: downloadJSON}, 'Download JSON'),
+                    e('button', {className: 'btn primary', onClick: downloadPatch, disabled: !patch}, 'Download Patch')
+                ])
+            ])
+        ]);
+      }
+      
+      const AllowedVarianceIssue = ({item}) => e('div', {className:'card', style:{padding:'16px'}}, [
+        e('div', {style:{display: 'flex', alignItems: 'center', gap:'12px', marginBottom: '8px'}}, [
+            e('div', {className:'chip', style:{background:'#F3F4F6', color:'#6B7280', border:'1px solid #D1D5DB'}}, 'ALLOWED'),
+            e('p', {className: 'drift-title', style:{margin:0, flex: 1}}, item.rationale || item.why)
+        ]),
+        e('div', {className: 'issue-meta', style:{borderTop: '1px solid var(--line)', paddingTop: '8px'}}, [
+            e(LocatorPill, {loc: item.locator}),
+            e('span', {className: 'mono muted'}, item.file)
+        ])
+      ]);
+
+      function groupDriftsByFile(drifts) {
+        const grouped = {};
+        drifts.forEach(drift => {
+          const file = drift.file;
+          if (!grouped[file]) {
+            grouped[file] = [];
+          }
+          grouped[file].push(drift);
+        });
+        return grouped;
+      }
+
+      function sortFilesByRisk(fileGroups) {
+        const riskPriority = { high: 4, medium: 3, low: 2, allowed: 1 };
+        
+        return Object.keys(fileGroups).sort((fileNameA, fileNameB) => {
+          const driftsA = fileGroups[fileNameA];
+          const driftsB = fileGroups[fileNameB];
+          const maxRiskA = Math.max(...driftsA.map(d => riskPriority[d._riskLevel] || 0));
+          const maxRiskB = Math.max(...driftsB.map(d => riskPriority[d._riskLevel] || 0));
+          
+          if (maxRiskA !== maxRiskB) {
+            return maxRiskB - maxRiskA;
+          }
+          return fileNameA.localeCompare(fileNameB);
+        });
+      }
+
+      function FileGroupAll({fileName, drifts, isSelected, onToggle}) {
+        const [isExpanded, setIsExpanded] = React.useState(false);
+        
+        const riskCounts = {
+          high: drifts.filter(d => d._riskLevel === 'high').length,
+          medium: drifts.filter(d => d._riskLevel === 'medium').length,
+          low: drifts.filter(d => d._riskLevel === 'low').length,
+          allowed: drifts.filter(d => d._riskLevel === 'allowed').length
+        };
+        
+        let fileRiskColor, fileRiskIcon, fileRiskLabel;
+        if (riskCounts.high > 0) {
+          fileRiskColor = 'var(--vz-red)';
+          fileRiskIcon = '🔴';
+          fileRiskLabel = 'High Risk';
+        } else if (riskCounts.medium > 0) {
+          fileRiskColor = 'var(--med)';
+          fileRiskIcon = '🟠';
+          fileRiskLabel = 'Medium Risk';
+        } else if (riskCounts.low > 0) {
+          fileRiskColor = 'var(--low)';
+          fileRiskIcon = '🟢';
+          fileRiskLabel = 'Low Risk';
+        } else {
+          fileRiskColor = 'var(--allowed)';
+          fileRiskIcon = '✅';
+          fileRiskLabel = 'Allowed Variance';
+        }
+        
+        const totalDrifts = drifts.length;
+        const riskSummary = [
+          riskCounts.high > 0 && `${riskCounts.high} high`,
+          riskCounts.medium > 0 && `${riskCounts.medium} medium`,
+          riskCounts.low > 0 && `${riskCounts.low} low`,
+          riskCounts.allowed > 0 && `${riskCounts.allowed} allowed`
+        ].filter(Boolean).join(', ');
+        
+        return e('div', {className: 'file-group-card', style:{
+          border: `2px solid ${fileRiskColor}`,
+          borderRadius: '12px',
+          marginBottom: '20px',
+          overflow: 'hidden'
+        }}, [
+          e('div', {
+            className: 'file-header',
+            style: {
+              backgroundColor: fileRiskColor + '15',
+              padding: '16px 20px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              borderBottom: isExpanded ? `1px solid ${fileRiskColor}40` : 'none'
+            }
+          }, [
+            e('div', {style: {display: 'flex', alignItems: 'center', gap: '12px'}}, [
+              // ✅ Checkbox for file selection
+              e('input', {
+                type: 'checkbox',
+                checked: isSelected,
+                onChange: (evt) => {
+                  evt.stopPropagation();
+                  onToggle(fileName);
+                },
+                style: {
+                  width: '18px',
+                  height: '18px',
+                  cursor: 'pointer',
+                  accentColor: fileRiskColor
+                }
+              }),
+              e('span', {style: {fontSize: '20px'}}, fileRiskIcon),
+              e('div', {
+                style: {cursor: 'pointer', flex: 1},
+                onClick: () => setIsExpanded(!isExpanded)
+              }, [
+                e('div', {style: {fontWeight: '500', fontSize: '14px', color: fileRiskColor}}, fileName),
+                e('div', {style: {fontSize: '14px', color: 'var(--muted)'}}, 
+                  `${totalDrifts} drift${totalDrifts !== 1 ? 's' : ''} • ${riskSummary}`)
+              ])
+            ]),
+            e('div', {
+              style: {fontSize: '24px', color: fileRiskColor, cursor: 'pointer'},
+              onClick: () => setIsExpanded(!isExpanded)
+            }, isExpanded ? '−' : '+')
+          ]),
+          
+          isExpanded && e('div', {style: {padding: '0'}}, [
+            riskCounts.high > 0 && e('div', {style: {marginBottom: '16px'}}, [
+              e('h3', {style: {fontSize: '12px', fontWeight: '600', color: 'var(--vz-red)', margin: '16px 16px 8px', textTransform: 'uppercase'}}, '🔴 High Risk'),
+              e('div', {className: 'grid-issues'}, drifts.filter(d => d._riskLevel === 'high').map((drift, i) => 
+                e(Issue, {key: i, item: drift, bucket: 'high'})
+              ))
+            ]),
+            riskCounts.medium > 0 && e('div', {style: {marginBottom: '16px'}}, [
+              e('h3', {style: {fontSize: '12px', fontWeight: '600', color: 'var(--med)', margin: '16px 16px 8px', textTransform: 'uppercase'}}, '🟠 Medium Risk'),
+              e('div', {className: 'grid-issues'}, drifts.filter(d => d._riskLevel === 'medium').map((drift, i) => 
+                e(Issue, {key: i, item: drift, bucket: 'medium'})
+              ))
+            ]),
+            riskCounts.low > 0 && e('div', {style: {marginBottom: '16px'}}, [
+              e('h3', {style: {fontSize: '12px', fontWeight: '600', color: 'var(--low)', margin: '16px 16px 8px', textTransform: 'uppercase'}}, '🟢 Low Risk'),
+              e('div', {className: 'grid-issues'}, drifts.filter(d => d._riskLevel === 'low').map((drift, i) => 
+                e(Issue, {key: i, item: drift, bucket: 'low'})
+              ))
+            ]),
+            riskCounts.allowed > 0 && e('div', {style: {marginBottom: '16px'}}, [
+              e('h3', {style: {fontSize: '12px', fontWeight: '600', color: 'var(--allowed)', margin: '16px 16px 8px', textTransform: 'uppercase'}}, '✅ Allowed Variance'),
+              e('div', {className: 'grid-issues'}, drifts.filter(d => d._riskLevel === 'allowed').map((drift, i) => 
+                e(AllowedVarianceIssue, {key: i, item: drift, bucket: 'allowed'})
+              ))
+            ])
+          ])
+        ]);
+      }
+
+      function AllDriftsByFile({data, selectedFiles, onToggleFile}) {
+        if (!data) return null;
+        const allDrifts = [
+          ...(data.high || []).map(d => ({...d, _riskLevel: 'high'})),
+          ...(data.medium || []).map(d => ({...d, _riskLevel: 'medium'})),
+          ...(data.low || []).map(d => ({...d, _riskLevel: 'low'})),
+          ...(data.allowed_variance || []).map(d => ({...d, _riskLevel: 'allowed'}))
+        ];
+        const fileGroups = groupDriftsByFile(allDrifts);
+        const fileNames = sortFilesByRisk(fileGroups);
+        
+        return e('div', null, [
+          e('h2', {className: 'section-title', style:{color: '#333', borderBottom: '2px solid #333'}}, 
+            '📁 All Drifts by File'),
+          e('div', {style: {marginTop: '16px'}}, fileNames.map(fileName => 
+            e(FileGroupAll, {
+              key: fileName, 
+              fileName, 
+              drifts: fileGroups[fileName],
+              isSelected: selectedFiles[fileName] || false,
+              onToggle: onToggleFile
+            })
+          ))
+        ]);
+      }
+
+      function Bucket({title, items, kind, riskColor, Component, selectedFiles, onToggleFile}){ 
+        if (!items || items.length === 0) return null;
+        const itemsWithRisk = items.map(item => ({...item, _riskLevel: kind}));
+        const fileGroups = groupDriftsByFile(itemsWithRisk);
+        const fileNames = sortFilesByRisk(fileGroups);
+        
+        return e('div',null, [
+          e('h2', {className: 'section-title', style:{color: riskColor, borderBottom: `2px solid ${riskColor}`}}, title),
+          e('div', {style: {marginTop: '16px'}}, fileNames.map(fileName => {
+            const fileDrifts = fileGroups[fileName];
+            const [isExpanded, setIsExpanded] = React.useState(false);
+            
+            return e('div', {key: fileName, className: 'file-group-card', style:{
+              border: `2px solid ${riskColor}`,
+              borderRadius: '12px',
+              marginBottom: '20px',
+              overflow: 'hidden'
+            }}, [
+              e('div', {
+                style: {
+                  backgroundColor: riskColor + '15',
+                  padding: '16px 20px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  borderBottom: isExpanded ? `1px solid ${riskColor}40` : 'none'
+                }
+              }, [
+                e('div', {style: {display: 'flex', alignItems: 'center', gap: '12px'}}, [
+                  // ✅ Checkbox for file selection
+                  e('input', {
+                    type: 'checkbox',
+                    checked: selectedFiles[fileName] || false,
+                    onChange: (evt) => {
+                      evt.stopPropagation();
+                      onToggleFile(fileName);
+                    },
+                    style: {
+                      width: '18px',
+                      height: '18px',
+                      cursor: 'pointer',
+                      accentColor: riskColor
+                    }
+                  }),
+                  e('span', {style: {fontSize: '20px'}}, 
+                    kind === 'high' ? '🔴' : kind === 'medium' ? '🟠' : kind === 'low' ? '🟢' : '✅'),
+                  e('div', {
+                    style: {cursor: 'pointer', flex: 1},
+                    onClick: () => setIsExpanded(!isExpanded)
+                  }, [
+                    e('div', {style: {fontWeight: '500', fontSize: '14px', color: riskColor}}, fileName),
+                    e('div', {style: {fontSize: '14px', color: 'var(--muted)'}}, 
+                      `${fileDrifts.length} drift${fileDrifts.length !== 1 ? 's' : ''}`)
+                ])
+              ]),
+                e('div', {
+                  style: {fontSize: '24px', color: riskColor, cursor: 'pointer'},
+                  onClick: () => setIsExpanded(!isExpanded)
+                }, isExpanded ? '−' : '+')
+              ]),
+              
+              isExpanded && e('div', {style: {padding: '0'}}, [
+                e('div', {className: 'grid-issues'}, fileDrifts.map((drift, i) => 
+                  e(Component, {key: i, item: drift, bucket: kind})
+                ))
+              ])
+            ]);
+          }))
+        ]); 
+      }
+      
+      // ============================================================================
+      // END OF HELPER COMPONENTS
+      // ============================================================================
+      
+      function DeploymentTab({serviceId, currentEnvironment, triggerAnalysis, runId, persistedDriftData, setPersistedDriftData, persistedHasRunAnalysis, setPersistedHasRunAnalysis, serviceConfig}) {
+        const [driftData, setDriftData] = React.useState(persistedDriftData);  // ✅ Initialize from persisted data
+        const [loading, setLoading] = React.useState(false);  // ✅ Start with false - no auto-loading
+        const [error, setError] = React.useState(null);
+        const [activeFilter, setActiveFilter] = React.useState('all');
+        const [hasRunAnalysis, setHasRunAnalysis] = React.useState(persistedHasRunAnalysis);  // ✅ Initialize from persisted flag
+        const [runDetails, setRunDetails] = React.useState(null);  // ✅ Store specific run details
+        const [selectedFiles, setSelectedFiles] = React.useState({});  // ✅ Track which files are selected for certification
+        const [certifying, setCertifying] = React.useState(false);  // ✅ Track certification in progress
+        const [selectedEnvironment, setSelectedEnvironment] = React.useState(currentEnvironment);  // ✅ Local environment selector
+        const [goldenBranchStatus, setGoldenBranchStatus] = React.useState(null);  // ✅ Track golden branch existence
+        const [checkingGoldenBranch, setCheckingGoldenBranch] = React.useState(false);  // ✅ Track golden branch check
+        
+        // ✅ Check if golden branch exists for the selected environment
+        const checkGoldenBranch = React.useCallback(async (environment) => {
+          if (!serviceId || !environment) return;
+          
+          try {
+            setCheckingGoldenBranch(true);
+            const response = await fetch(`/api/services/${serviceId}/validate-golden/${environment}`);
+            const data = await response.json();
+            setGoldenBranchStatus(data);
+          } catch (err) {
+            console.error('Error checking golden branch:', err);
+            setGoldenBranchStatus({ golden_exists: false });
+          } finally {
+            setCheckingGoldenBranch(false);
+          }
+        }, [serviceId]);
+        
+        // ✅ Check golden branch when environment changes
+        React.useEffect(() => {
+          checkGoldenBranch(selectedEnvironment);
+        }, [selectedEnvironment, checkGoldenBranch]);
+        
+        // ✅ Helper function to update both local and persisted drift data + sessionStorage
+        const updateDriftData = React.useCallback((data) => {
+          setDriftData(data);
+          setPersistedDriftData(data);
+          // ✅ FIXED: Store in sessionStorage using selectedEnvironment (not currentEnvironment)
+          const storageKey = `drift_analysis_${serviceId}_${selectedEnvironment}`;
+          if (data) {
+            sessionStorage.setItem(storageKey, JSON.stringify(data));
+          } else {
+            sessionStorage.removeItem(storageKey);
+          }
+        }, [setPersistedDriftData, serviceId, selectedEnvironment]);
+        
+        // ✅ Load from sessionStorage when environment changes
+        React.useEffect(() => {
+          const storageKey = `drift_analysis_${serviceId}_${selectedEnvironment}`;
+          const storedData = sessionStorage.getItem(storageKey);
+          
+          if (storedData) {
+            // ✅ CRITICAL FIX: Always load data when environment changes (removed !driftData condition)
+            try {
+              const parsed = JSON.parse(storedData);
+              setDriftData(parsed);
+              setPersistedDriftData(parsed);
+              setHasRunAnalysis(true);
+              setPersistedHasRunAnalysis(true);
+            } catch (e) {
+              console.error('Failed to parse stored drift data:', e);
+              sessionStorage.removeItem(storageKey);
+            }
+          } else {
+            // ✅ No stored data for this environment - clear the drift data
+            setDriftData(null);
+            setPersistedDriftData(null);
+            setHasRunAnalysis(false);
+            setPersistedHasRunAnalysis(false);
+          }
+        }, [serviceId, selectedEnvironment]);  // ✅ Triggers when environment changes
+        
+        // ✅ Function to run analysis (will be called by analyze button)
+        const runAnalysis = React.useCallback(async () => {
+          if (!serviceId) return;
+          
+          // ✅ Check if golden branch exists before running analysis
+          if (!goldenBranchStatus?.golden_exists) {
+            setError(`Cannot run analysis: No golden branch exists for ${selectedEnvironment} environment. Please certify this environment first.`);
+            return;
+          }
+          
+          try {
+            setLoading(true);
+            setError(null);
+            
+            // Trigger analysis using the selected environment
+            const analyzeResponse = await fetch(`/api/services/${serviceId}/analyze/${selectedEnvironment}`, {
+              method: 'POST'
+            });
+            
+            if (!analyzeResponse.ok) {
+              throw new Error('Analysis failed. Please try again.');
+            }
+            
+            // Wait a moment for analysis to complete, then load results
+            setTimeout(async () => {
+              try {
+                // ✅ FIXED: Pass environment parameter to load correct results
+                const response = await fetch(`/api/services/${serviceId}/llm-output?environment=${selectedEnvironment}`);
+                if (!response.ok) {
+                  throw new Error('Analysis completed but results not available yet. Please try again.');
+                }
+                const data = await response.json();
+                updateDriftData(data.data || {});  // ✅ Use helper to update both states
+                setHasRunAnalysis(true);
+                setPersistedHasRunAnalysis(true);  // ✅ Persist the flag
+                setError(null);
+              } catch (err) {
+                console.error('Error loading analysis results:', err);
+                setError(err.message);
+                updateDriftData(null);  // ✅ Use helper to update both states
+              } finally {
+                setLoading(false);
+              }
+            }, 2000); // Wait 2 seconds for analysis to complete
+            
+          } catch (err) {
+            console.error('Error running analysis:', err);
+            setError(err.message);
+            setLoading(false);
+          }
+        }, [serviceId, selectedEnvironment, goldenBranchStatus]);
+        
+        // ✅ Load specific run data if runId is provided
+        React.useEffect(() => {
+          if (runId) {
+            const loadRunData = async () => {
+              try {
+                setLoading(true);
+                setError(null);
+                
+                // ✅ Extract service_id from run_id as fallback
+                let actualServiceId = serviceId;
+                if (runId.includes('_')) {
+                  const parts = runId.split('_');
+                  // Find environment position
+                  // parts[0] = "run", parts[1] = date, parts[2] = time, parts[3:] = service name
+                  const envPos = parts.findIndex(part => ['prod', 'dev', 'qa', 'staging'].includes(part));
+                  if (envPos > 3) {  // Changed from > 2 to > 3 (skip run, date, time)
+                    const extractedServiceId = parts.slice(3, envPos).join('_');
+                    console.log(`🔍 Frontend extracted service_id: '${extractedServiceId}' from run_id: '${runId}'`);
+                    actualServiceId = extractedServiceId;
+                  }
+                }
+                
+                // Load run details
+                const runResponse = await fetch(`/api/services/${actualServiceId}/run/${runId}`);
+                if (!runResponse.ok) {
+                  throw new Error(`Run not found for service '${actualServiceId}' or data unavailable`);
+                }
+                const runData = await runResponse.json();
+                setRunDetails(runData);
+                
+                // ✅ FIXED: Extract environment from run data and pass it to llm-output
+                const runEnvironment = runData?.request_params?.environment || selectedEnvironment;
+                const driftResponse = await fetch(`/api/services/${actualServiceId}/llm-output?environment=${runEnvironment}`);
+                if (driftResponse.ok) {
+                  const driftDataResponse = await driftResponse.json();
+                  updateDriftData(driftDataResponse.data || {});  // ✅ Use helper to update both states
+                }
+                
+                setHasRunAnalysis(true);
+                setPersistedHasRunAnalysis(true);  // ✅ Persist the flag
+              } catch (err) {
+                console.error('Error loading run data:', err);
+                setError(err.message);
+              } finally {
+                setLoading(false);
+              }
+            };
+            
+            loadRunData();
+          }
+        }, [runId, serviceId]);
+        
+        // ✅ Respond to trigger from header button
+        React.useEffect(() => {
+          if (triggerAnalysis > 0 && !runId) {  // Only trigger if not viewing specific run
+            runAnalysis();
+          }
+        }, [triggerAnalysis, runAnalysis, runId]);
+        
+        // ✅ Auto-select all files when drift data is loaded
+        React.useEffect(() => {
+          if (driftData) {
+            // Group all drifts by file to get unique file names
+            const allDrifts = [
+              ...(driftData.high || []).map(d => ({...d, _riskLevel: 'high'})),
+              ...(driftData.medium || []).map(d => ({...d, _riskLevel: 'medium'})),
+              ...(driftData.low || []).map(d => ({...d, _riskLevel: 'low'})),
+              ...(driftData.allowed_variance || []).map(d => ({...d, _riskLevel: 'allowed'}))
+            ];
+            const fileGroups = groupDriftsByFile(allDrifts);
+            const allFiles = {};
+            Object.keys(fileGroups).forEach(file => {
+              allFiles[file] = true;  // Select all files by default
+            });
+            setSelectedFiles(allFiles);
+          }
+        }, [driftData]);
+        
+        // Filter functions
+        function handleFilterClick(filter) {
+          setActiveFilter(activeFilter === filter ? 'all' : filter);
+        }
+        
+        // ✅ File selection handlers
+        function toggleFileSelection(fileName) {
+          setSelectedFiles(prev => ({
+            ...prev,
+            [fileName]: !prev[fileName]
+          }));
+        }
+        
+        function selectAllFiles() {
+          if (!driftData) return;
+          // Group all drifts by file to get unique file names
+          const allDrifts = [
+            ...(driftData.high || []).map(d => ({...d, _riskLevel: 'high'})),
+            ...(driftData.medium || []).map(d => ({...d, _riskLevel: 'medium'})),
+            ...(driftData.low || []).map(d => ({...d, _riskLevel: 'low'})),
+            ...(driftData.allowed_variance || []).map(d => ({...d, _riskLevel: 'allowed'}))
+          ];
+          const fileGroups = groupDriftsByFile(allDrifts);
+          const allFiles = {};
+          Object.keys(fileGroups).forEach(file => {
+            allFiles[file] = true;
+          });
+          setSelectedFiles(allFiles);
+        }
+        
+        function deselectAllFiles() {
+          if (!driftData) return;
+          // Group all drifts by file to get unique file names
+          const allDrifts = [
+            ...(driftData.high || []).map(d => ({...d, _riskLevel: 'high'})),
+            ...(driftData.medium || []).map(d => ({...d, _riskLevel: 'medium'})),
+            ...(driftData.low || []).map(d => ({...d, _riskLevel: 'low'})),
+            ...(driftData.allowed_variance || []).map(d => ({...d, _riskLevel: 'allowed'}))
+          ];
+          const fileGroups = groupDriftsByFile(allDrifts);
+          const allFiles = {};
+          Object.keys(fileGroups).forEach(file => {
+            allFiles[file] = false;
+          });
+          setSelectedFiles(allFiles);
+        }
+        
+        function getSelectedFilesCount() {
+          return Object.values(selectedFiles).filter(Boolean).length;
+        }
+        
+        function getTotalFilesCount() {
+          if (!driftData) return 0;
+          // Group all drifts by file to count unique files
+          const allDrifts = [
+            ...(driftData.high || []).map(d => ({...d, _riskLevel: 'high'})),
+            ...(driftData.medium || []).map(d => ({...d, _riskLevel: 'medium'})),
+            ...(driftData.low || []).map(d => ({...d, _riskLevel: 'low'})),
+            ...(driftData.allowed_variance || []).map(d => ({...d, _riskLevel: 'allowed'}))
+          ];
+          const fileGroups = groupDriftsByFile(allDrifts);
+          return Object.keys(fileGroups).length;
+        }
+        
+        // ✅ Certify selected files
+        async function certifySelectedFiles() {
+          const selectedFilesList = Object.keys(selectedFiles).filter(file => selectedFiles[file]);
+          
+          if (selectedFilesList.length === 0) {
+            alert('Please select at least one file to certify.');
+            return;
+          }
+          
+          const confirmed = confirm(
+            `You are about to certify ${selectedFilesList.length} of ${getTotalFilesCount()} files.\n\n` +
+            `A new golden branch will be created with:\n` +
+            `- Accepted files: Latest version from drift branch\n` +
+            `- Rejected files: Original version from current golden branch\n\n` +
+            `Continue?`
+          );
+          
+          if (!confirmed) return;
+          
+          try {
+            setCertifying(true);
+            const response = await fetch(`/api/services/${serviceId}/certify-selective/${currentEnvironment}`, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                approved_files: selectedFilesList
+              })
+            });
+            
+            if (!response.ok) {
+              let errorData;
+              try {
+                errorData = await response.json();
+              } catch (e) {
+                errorData = { detail: 'Certification failed - server error' };
+              }
+              throw new Error(errorData.detail || 'Certification failed');
+            }
+            
+            const result = await response.json();
+            alert(`✅ Certification successful!\n\nNew golden branch: ${result.golden_branch}\nAccepted files: ${selectedFilesList.length}\nRejected files: ${getTotalFilesCount() - selectedFilesList.length}`);
+            
+            // Give user time to read the alert before redirecting
+            setTimeout(() => {
+              window.location.href = `/branch-environment?id=${serviceId}&tab=certifications`;
+            }, 500);
+            
+          } catch (err) {
+            console.error('Certification error:', err);
+            alert(`❌ Certification failed: ${err.message}`);
+          } finally {
+            setCertifying(false);
+          }
+        }
+
+        function getFilteredData() {
+          if (!driftData || activeFilter === 'all') return driftData;
+          
+          const filtered = {
+            summary: driftData.summary,
+            high: activeFilter === 'high' ? driftData.high : [],
+            medium: activeFilter === 'medium' ? driftData.medium : [],
+            low: activeFilter === 'low' ? driftData.low : [],
+            allowed_variance: activeFilter === 'allowed' ? driftData.allowed_variance : []
+          };
+          
+          return filtered;
+        }
+        
+        if (loading) {
+          return e('div', {className: 'card', style: {textAlign: 'center', padding: '40px'}}, [
+            e('div', {style: {fontSize: '48px', marginBottom: '16px'}}, '⏳'),
+            e('div', {style: {fontSize: '18px'}}, 'Running drift analysis...'),
+            e('div', {className: 'spinner', style: {margin: '20px auto'}})
+          ]);
+        }
+        
+        // ✅ Show "Run Analysis" message by default (when no analysis has been run yet and no specific run requested)
+        if (!hasRunAnalysis && !driftData && !runId) {
+          return e('div', {className: 'card', style: {textAlign: 'center', padding: '40px'}}, [
+            e('div', {style: {fontSize: '48px', marginBottom: '16px'}}, '🔍'),
+            e('div', {style: {fontSize: '18px', marginBottom: '8px', fontWeight: '600'}}, 'Ready to Analyze'),
+            e('div', {style: {color: 'var(--muted)', marginBottom: '24px'}}, 
+              'Run a drift analysis to see configuration differences and risk assessment'),
+            // Environment Selector
+            e('div', {style: {display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '20px'}}, [
+              e('label', {style: {fontSize: '14px', fontWeight: '600', color: 'var(--ink)'}}, 'Environment:'),
+              e('select', {
+                value: selectedEnvironment,
+                onChange: (e) => setSelectedEnvironment(e.target.value),
+                style: {
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  border: '1px solid #D1D5DB',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  backgroundColor: 'white',
+                  cursor: 'pointer',
+                  minWidth: '150px'
+                }
+              }, serviceConfig?.environments?.map(env => 
+                e('option', {key: env, value: env}, env.charAt(0).toUpperCase() + env.slice(1))
+              ) || [
+                e('option', {key: 'prod', value: 'prod'}, 'Production'),
+                e('option', {key: 'dev', value: 'dev'}, 'Development'),
+                e('option', {key: 'qa', value: 'qa'}, 'QA'),
+                e('option', {key: 'staging', value: 'staging'}, 'Staging')
+              ])
+            ]),
+            // ✅ Warning box if no golden branch exists
+            goldenBranchStatus && !goldenBranchStatus.golden_exists && e('div', {
+              style: {
+                backgroundColor: '#FFF3CD',
+                border: '2px solid #FFC107',
+                borderRadius: '8px',
+                padding: '16px 20px',
+                marginBottom: '20px',
+                maxWidth: '500px',
+                margin: '0 auto 20px auto'
+              }
+            }, [
+              e('div', {style: {display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px'}}, [
+                e('div', {style: {fontSize: '24px'}}, '⚠️'),
+                e('div', {style: {fontSize: '16px', fontWeight: '600', color: '#856404'}}, 'Environment Not Certified')
+              ]),
+              e('div', {style: {fontSize: '14px', color: '#856404', lineHeight: '1.5'}}, 
+                `The ${selectedEnvironment} environment has no golden branch. Please certify this environment in the "Certifications" tab before running drift analysis.`
+              )
+            ]),
+            e('button', {
+              className: 'btn primary',
+              onClick: runAnalysis,
+              disabled: !goldenBranchStatus?.golden_exists || checkingGoldenBranch,
+              style: {
+                fontSize: '16px',
+                padding: '12px 24px',
+                opacity: (!goldenBranchStatus?.golden_exists || checkingGoldenBranch) ? 0.5 : 1,
+                cursor: (!goldenBranchStatus?.golden_exists || checkingGoldenBranch) ? 'not-allowed' : 'pointer'
+              }
+            }, checkingGoldenBranch ? 'Checking...' : '🚀 Run Drift Analysis')
+          ]);
+        }
+        
+        if (error) {
+          return e('div', {className: 'card', style: {textAlign: 'center', padding: '40px'}}, [
+            e('div', {style: {fontSize: '48px', marginBottom: '16px'}}, '❌'),
+            e('div', {style: {fontSize: '18px', marginBottom: '8px'}}, 'Analysis Failed'),
+            e('div', {style: {color: 'var(--muted)', marginBottom: '24px'}}, error),
+            e('button', {
+              className: 'btn primary',
+              onClick: runAnalysis,
+              style: {fontSize: '16px', padding: '12px 24px'}
+            }, '🔄 Try Again')
+          ]);
+        }
+        
+        if (!driftData) {
+          return e('div', {className: 'card', style: {textAlign: 'center', padding: '40px'}}, [
+            e('div', {style: {fontSize: '48px', marginBottom: '16px'}}, '📊'),
+            e('div', {style: {fontSize: '18px', marginBottom: '8px'}}, 'No Analysis Data'),
+            e('div', {style: {color: 'var(--muted)', marginBottom: '24px'}}, 
+              'Analysis completed but no data available'),
+            e('button', {
+              className: 'btn primary',
+              onClick: runAnalysis,
+              style: {fontSize: '16px', padding: '12px 24px'}
+            }, '🔄 Run New Analysis')
+          ]);
+        }
+        
+        // Use filtered data for display
+        const displayData = getFilteredData();
+        
+        // Extract statistics from LLM output summary
+        const summary = displayData?.summary || {};
+        const totalConfigFiles = summary.total_config_files || 0;
+        const filesWithDrift = summary.files_with_drift || 0;
+        const totalDrifts = summary.total_drifts || 0;
+        
+        // Risk counts from LLM output summary
+        const counts = { 
+          high: summary.high_risk || 0, 
+          medium: summary.medium_risk || 0, 
+          low: summary.low_risk || 0, 
+          allowed: summary.allowed_variance || 0 
+        };
+        
+        return e('div', null, [
+          // ✅ Add header with run info, environment selector, and "Run New Analysis" button
+          e('div', {style: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}, [
+            e('div', {style: {fontSize: '18px', fontWeight: '600'}}, 
+              runId && runDetails ? 
+                `Analysis Run: ${runDetails.run_id} (${runDetails.verdict || 'COMPLETED'})` :
+                'Drift Analysis Results'
+            ),
+            !runId && e('div', {style: {display: 'flex', alignItems: 'center', gap: '12px'}}, [
+              // Environment Selector
+              e('div', {style: {display: 'flex', alignItems: 'center', gap: '8px'}}, [
+                e('label', {style: {fontSize: '13px', fontWeight: '600', color: 'var(--ink)'}}, 'Environment:'),
+                e('select', {
+                  value: selectedEnvironment,
+                  onChange: (e) => setSelectedEnvironment(e.target.value),
+                  style: {
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #D1D5DB',
+                    fontSize: '13px',
+                    fontWeight: '500',
+                    backgroundColor: 'white',
+                    cursor: 'pointer'
+                  }
+                }, serviceConfig?.environments?.map(env => 
+                  e('option', {key: env, value: env}, env.charAt(0).toUpperCase() + env.slice(1))
+                ) || [
+                  e('option', {key: 'prod', value: 'prod'}, 'Production'),
+                  e('option', {key: 'dev', value: 'dev'}, 'Development'),
+                  e('option', {key: 'qa', value: 'qa'}, 'QA'),
+                  e('option', {key: 'staging', value: 'staging'}, 'Staging')
+                ])
+              ]),
+              e('button', {  // "Run New Analysis" button
+                className: 'btn primary',
+                onClick: runAnalysis,
+                disabled: !goldenBranchStatus?.golden_exists || checkingGoldenBranch,
+                style: {
+                  fontSize: '14px',
+                  padding: '8px 16px',
+                  opacity: (!goldenBranchStatus?.golden_exists || checkingGoldenBranch) ? 0.6 : 1,
+                  cursor: (!goldenBranchStatus?.golden_exists || checkingGoldenBranch) ? 'not-allowed' : 'pointer'
+                }
+              }, checkingGoldenBranch ? 'Checking...' : '🔄 Run New Analysis')
+            ])
+          ]),
+          
+          // ✅ Warning banner if no golden branch exists (shown in results view)
+          !runId && goldenBranchStatus && !goldenBranchStatus.golden_exists && e('div', {
+            style: {
+              backgroundColor: '#FFF3CD',
+              border: '2px solid #FFC107',
+              borderRadius: '8px',
+              padding: '16px 20px',
+              marginBottom: '24px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px'
+            }
+          }, [
+            e('div', {style: {fontSize: '24px'}}, '⚠️'),
+                e('div', null, [
+              e('div', {style: {fontSize: '15px', fontWeight: '600', color: '#856404', marginBottom: '4px'}}, 'Environment Not Certified'),
+              e('div', {style: {fontSize: '13px', color: '#856404'}}, 
+                `The ${selectedEnvironment} environment has no golden branch. Please certify in the "Certifications" tab.`
+              )
+            ])
+          ]),
+          
+          // ✅ File Selection Controls & Certify Button
+          !runId && e('div', {style: {
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '16px',
+            backgroundColor: '#f8f9fa',
+            borderRadius: '8px',
+            marginBottom: '24px',
+            border: '1px solid #dee2e6'
+          }}, [
+            e('div', {style: {display: 'flex', alignItems: 'center', gap: '16px'}}, [
+              e('div', {style: {fontWeight: '500', color: '#495057'}}, 
+                `Selected: ${getSelectedFilesCount()} of ${getTotalFilesCount()} files`
+              ),
+                e('div', {style: {display: 'flex', gap: '8px'}}, [
+                e('button', {
+                  className: 'btn',
+                  onClick: selectAllFiles,
+                  style: {fontSize: '13px', padding: '6px 12px', backgroundColor: '#e7f5ff', color: '#1971c2', border: '1px solid #a5d8ff'}
+                }, '✓ Select All'),
+                e('button', {
+                  className: 'btn',
+                  onClick: deselectAllFiles,
+                  style: {fontSize: '13px', padding: '6px 12px', backgroundColor: '#fff5f5', color: '#c92a2a', border: '1px solid #ffc9c9'}
+                }, '✗ Deselect All')
+                ])
+              ]),
+            e('button', {
+              className: 'btn primary',
+              onClick: certifySelectedFiles,
+              disabled: certifying || getSelectedFilesCount() === 0,
+              style: {
+                fontSize: '14px',
+                padding: '10px 20px',
+                fontWeight: '600',
+                opacity: certifying || getSelectedFilesCount() === 0 ? 0.6 : 1,
+                cursor: certifying || getSelectedFilesCount() === 0 ? 'not-allowed' : 'pointer'
+              }
+            }, certifying ? '⏳ Certifying...' : '✅ Certify Accepted Files')
+          ]),
+          
+          // 7 Stat Boxes (matching index.html exactly)
+          e('div', {className:'stats', style:{margin:'0 0 24px 0'}}, [
+            // Summary Statistics (Top Row) - Display only (not clickable)
+            e('div', {className:'card stat', style:{
+              backgroundColor: 'white', 
+              border: '1px solid #e0e0e0',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+            }}, [
+              e('div',{className:'lbl'}, 'Total Config Files'), 
+              e('div',{className:'val', style:{color:'#1a1a1a'}}, totalConfigFiles)
+            ]),
+            e('div', {className:'card stat', style:{
+              backgroundColor: 'white', 
+              border: '1px solid #e0e0e0',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+            }}, [
+              e('div',{className:'lbl'}, 'Files with Drift'), 
+              e('div',{className:'val', style:{color:'#1a1a1a'}}, filesWithDrift)
+            ]),
+            e('div', {className:'card stat', style:{
+              backgroundColor: 'white', 
+              border: '1px solid #e0e0e0',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+            }}, [
+              e('div',{className:'lbl'}, 'Total Drifts'), 
+              e('div',{className:'val', style:{color:'#1a1a1a'}}, totalDrifts)
+            ]),
+            // Risk Categories (Bottom Row) - Clickable filters
+            e('div', {className:'card stat clickable', style:{
+              backgroundColor: activeFilter === 'high' ? '#ffebee' : 'white', 
+              border: activeFilter === 'high' ? '3px solid var(--vz-red)' : '1px solid var(--line)',
+              cursor: 'pointer'
+            }, onClick: () => handleFilterClick('high')}, [
+              e('div',{className:'lbl'}, 'High Risk'), 
+              e('div',{className:'val', style:{color:'var(--vz-red)'}}, counts.high)
+            ]),
+            e('div', {className:'card stat clickable', style:{
+              backgroundColor: activeFilter === 'medium' ? '#fff3e0' : 'white', 
+              border: activeFilter === 'medium' ? '3px solid var(--med)' : '1px solid var(--line)',
+              cursor: 'pointer'
+            }, onClick: () => handleFilterClick('medium')}, [
+              e('div',{className:'lbl'}, 'Medium Risk'), 
+              e('div',{className:'val', style:{color:'var(--med)'}}, counts.medium)
+            ]),
+            e('div', {className:'card stat clickable', style:{
+              backgroundColor: activeFilter === 'low' ? '#f3e5f5' : 'white', 
+              border: activeFilter === 'low' ? '3px solid var(--low)' : '1px solid var(--line)',
+              cursor: 'pointer'
+            }, onClick: () => handleFilterClick('low')}, [
+              e('div',{className:'lbl'}, 'Low Risk'), 
+              e('div',{className:'val', style:{color:'var(--low)'}}, counts.low)
+            ]),
+            e('div', {className:'card stat clickable', style:{
+              backgroundColor: activeFilter === 'allowed' ? '#e8f5e8' : 'white', 
+              border: activeFilter === 'allowed' ? '3px solid var(--allowed)' : '1px solid var(--line)',
+              cursor: 'pointer'
+            }, onClick: () => handleFilterClick('allowed')}, [
+              e('div',{className:'lbl'}, 'Allowed Variance'), 
+              e('div',{className:'val', style:{color:'var(--allowed)'}}, counts.allowed)
+            ])
+          ]),
+          
+          // Drift Display Area
+          e('div', {className: 'grid-issues', style:{gap: '32px'}}, [
+            counts.high + counts.medium + counts.low + counts.allowed === 0 ? 
+              e('div',{className:'success-banner'}, [
+                e('p',{style:{fontSize:'18px',fontWeight:'bold',marginBottom:'4px'}}, 
+                  activeFilter === 'all' ? '✅ No Drift Detected' : `✅ No ${activeFilter} risk items found`),
+                e('p',{style:{margin:0}}, 
+                  activeFilter === 'all' ? 'All configurations match the golden state. No action required.' : 
+                  `Try clicking "Total Drifts" to see all items.`)
+              ]) : null,
+            
+            // Show file-grouped view when "all" is selected, otherwise show risk-grouped view
+            activeFilter === 'all' ? 
+              e(AllDriftsByFile, {
+                data: displayData,
+                selectedFiles: selectedFiles,
+                onToggleFile: toggleFileSelection
+              }) : [
+                e(Bucket,{title:'🔴 High Risk Changes', items: displayData.high, kind:'high', riskColor: 'var(--vz-red)', Component: Issue, selectedFiles: selectedFiles, onToggleFile: toggleFileSelection}),
+                e(Bucket,{title:'🟠 Medium Risk Changes', items: displayData.medium, kind:'medium', riskColor: 'var(--med)', Component: Issue, selectedFiles: selectedFiles, onToggleFile: toggleFileSelection}),
+                e(Bucket,{title:'🟢 Low Risk Changes', items: displayData.low, kind:'low', riskColor: 'var(--low)', Component: Issue, selectedFiles: selectedFiles, onToggleFile: toggleFileSelection}),
+                e(Bucket,{title:'✅ Allowed Variance', items: displayData.allowed_variance, kind:'allowed', riskColor: 'var(--allowed)', Component: AllowedVarianceIssue, selectedFiles: selectedFiles, onToggleFile: toggleFileSelection})
+              ]
+          ])
+        ]);
+      }
+      
+      function CertificationsTab({issueData, onStagingClick, onRecertifyClick, serviceConfig, serviceId, onCertificationUpdate}) {
+        const [certifications, setCertifications] = React.useState({});
+        const [loading, setLoading] = React.useState({});
+        const [error, setError] = React.useState(null);
+        
+        // Load certification status for all environments
+        React.useEffect(() => {
+          const loadCertifications = async () => {
+            if (!serviceConfig) return;
+            
+            // Get environments from service configuration (no hardcoded values)
+            const environments = serviceConfig?.environments || ['prod', 'dev', 'qa', 'staging'];
+            
+            const certData = {};
+            for (const env of environments) {
+              try {
+                const response = await fetch(`/api/services/${serviceId}/validate-golden/${env}`);
+                const data = await response.json();
+                certData[env] = data;
+              } catch (err) {
+                certData[env] = { golden_exists: false, error: err.message };
+              }
+            }
+            setCertifications(certData);
+          };
+          loadCertifications();
+        }, [serviceConfig, serviceId]);
+        
+        const handleCertify = async (environment) => {
+          setLoading(prev => ({ ...prev, [environment]: true }));
+          setError(null);
+          
+          try {
+            const response = await fetch(`/api/services/${serviceId}/set-golden/${environment}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' }
+            });
+            
+            if (!response.ok) {
+              throw new Error(`Failed to certify ${environment}: ${response.statusText}`);
+            }
+            
+            const result = await response.json();
+            
+            // Update certifications state
+            setCertifications(prev => ({
+              ...prev,
+              [environment]: {
+                golden_exists: true,
+                active_golden_branch: result.branch_name,
+                service_id: serviceId,
+                environment: environment
+              }
+            }));
+            
+            // Trigger overview tab update
+            if (onCertificationUpdate) {
+              onCertificationUpdate();
+            }
+            
+          } catch (err) {
+            setError(`Failed to certify ${environment}: ${err.message}`);
+          } finally {
+            setLoading(prev => ({ ...prev, [environment]: false }));
+          }
+        };
+        
+        const handleRevoke = async (environment) => {
+          setLoading(prev => ({ ...prev, [environment]: true }));
+          setError(null);
+          
+          try {
+            const response = await fetch(`/api/services/${serviceId}/revoke-golden/${environment}`, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' }
+            });
+            
+            if (!response.ok) {
+              throw new Error(`Failed to revoke ${environment}: ${response.statusText}`);
+            }
+            
+            const result = await response.json();
+            
+            // Update certifications state
+            setCertifications(prev => ({
+              ...prev,
+              [environment]: {
+                golden_exists: false,
+                active_golden_branch: null,
+                service_id: serviceId,
+                environment: environment
+              }
+            }));
+            
+            // Trigger overview tab update
+            if (onCertificationUpdate) {
+              onCertificationUpdate();
+            }
+            
+          } catch (err) {
+            setError(`Failed to revoke ${environment}: ${err.message}`);
+          } finally {
+            setLoading(prev => ({ ...prev, [environment]: false }));
+          }
+        };
+        
+        const getEnvironmentDisplayName = (env) => {
+          const names = {
+            'prod': 'Production',
+            'dev': 'Development', 
+            'qa': 'QA',
+            'staging': 'Staging'
+          };
+          return names[env] || env;
+        };
+        
+        const getEnvironmentColor = (env) => {
+          const colors = {
+            'prod': 'var(--ink)',
+            'dev': 'var(--ink)',
+            'qa': 'var(--ink)', 
+            'staging': 'var(--ink)'
+          };
+          return colors[env] || 'var(--muted)';
+        };
+        
+        return e('div', {className: 'card'}, [
+          e('h3', {style: {margin: '0 0 20px 0'}}, 'Environment Certification & Golden Branches'),
+          e('p', {style: {color: 'var(--muted)', margin: '0 0 24px 0'}}, 
+            'Certify environments to create golden branches for drift analysis baseline'),
+          
+          // Error message
+          error && e('div', {style: {background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: '8px', padding: '12px', marginBottom: '16px', color: 'var(--red)'}}, 
+            `❌ ${error}`
+          ),
+          
+          // Environment certifications
+          ...(() => {
+            // Get environments from service config (dynamic, no hardcoded values)
+            const environments = serviceConfig?.environments || [];
+            return environments.map(env => {
+            const cert = certifications[env] || {};
+            const isCertified = cert.golden_exists;
+            const isLoading = loading[env];
+            
+            return e('div', {key: env, className: 'env-cert'}, [
+              // Top row: Environment name + Certified tag on left, buttons on far right
+              e('div', {style: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}, [
+                e('div', {style: {display: 'flex', alignItems: 'center', gap: '12px'}}, [
+                  e('div', {className: 'env-name', style: {color: getEnvironmentColor(env)}}, 
+                    getEnvironmentDisplayName(env)
+                  ),
+                  isCertified && e('span', {className: 'badge success'}, [
+                    e('span', null, '✓'),
+                'Certified'
+            ]),
+                  // ✅ Show drift count badge for non-production environments (alpha, beta1, beta2)
+                  isCertified && env !== 'prod' && cert.drift_count > 0 && e('span', {
+                    style: {
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '4px 10px',
+                      background: '#fff3cd',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      color: '#856404',
+                      fontWeight: '500'
+                    }
+                  }, [
+                    e('span', {key: 'icon'}, '⚠'),
+                    e('span', {key: 'text'}, `${cert.drift_count} Drift`)
+            ])
+          ]),
+                e('div', {style: {display: 'flex', gap: '8px'}}, [
+                  isCertified ? [
+                    e('button', {
+                      className: 'btn',
+                      disabled: isLoading,
+                      onClick: () => handleRevoke(env),
+                      style: {backgroundColor: '#F3F4F6', color: '#111827', border: '1px solid #D1D5DB'}
+                    }, [
+                      e('span', {style: {marginRight: '6px'}}, '×'),
+                      isLoading ? 'Revoking...' : 'Revoke'
+                    ]),
+                    e('button', {
+                      className: 'btn',
+                      disabled: isLoading,
+                      onClick: () => onRecertifyClick(env),  // ✅ Use confirmation dialog instead of direct certify
+                      style: {backgroundColor: '#F3F4F6', color: '#111827', border: '1px solid #D1D5DB'}
+                    }, [
+                      e('span', {style: {marginRight: '6px'}}, '↻'),
+                      isLoading ? 'Re-certifying...' : 'Re-certify'
+                    ])
+                  ] : [
+                    e('button', {
+                      className: 'btn',
+                      disabled: isLoading,
+                      onClick: () => handleCertify(env),
+                      style: {backgroundColor: '#F3F4F6', color: '#111827', border: '1px solid #D1D5DB'}
+                    }, isLoading ? 'Certifying...' : 'Certify')
+                  ]
+                ])
+              ]),
+              // Details below the environment name (not on the right)
+              e('div', {style: {marginLeft: '0'}}, [
+                isCertified ? [
+                  e('div', {className: 'env-details'}, 
+                    `Golden Branch: ${cert.active_golden_branch || 'Unknown'}`
+                  ),
+                  e('div', {className: 'env-details', style: {color: '#666'}}, 
+                    `Certified: ${formatBranchTimestamp(cert.active_golden_branch)}`
+                  ),
+                  e('div', {className: 'env-details', style: {marginTop: '4px'}}, 
+                    `Ready for drift analysis`
+                  )
+                ] : [
+                  e('div', {className: 'env-details'}, 
+                    'No golden branch found - certification required'
+                  ),
+                  e('div', {className: 'env-details'}, 
+                    'Click "Certify" to create golden baseline'
+                  )
+                ]
+              ])
+            ]);
+          });
+          })()
+        ]);
+      }
+      
+      function HistoryTab({serviceId, currentEnvironment}) {
+        const [runHistory, setRunHistory] = React.useState([]);
+        const [loading, setLoading] = React.useState(true);
+        const [error, setError] = React.useState(null);
+        const [selectedEnv, setSelectedEnv] = React.useState(currentEnvironment || 'prod');
+        
+        // Load run history from API
+        React.useEffect(() => {
+          const loadRunHistory = async () => {
+            if (!serviceId || !selectedEnv) return;
+            
+            try {
+              setLoading(true);
+              const response = await fetch(`/api/services/${serviceId}/run-history/${selectedEnv}`);
+              if (!response.ok) throw new Error('Failed to load run history');
+              const data = await response.json();
+              setRunHistory(data.runs || []);
+              setError(null);
+            } catch (err) {
+              console.error('Error loading run history:', err);
+              setError(err.message);
+              setRunHistory([]);
+            } finally {
+              setLoading(false);
+            }
+          };
+          
+          loadRunHistory();
+        }, [serviceId, selectedEnv]);
+        
+        // Format timestamp
+        const formatTimestamp = (isoString) => {
+          try {
+            const date = new Date(isoString);
+            return date.toLocaleString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+          } catch {
+            return isoString;
+          }
+        };
+        
+        // Get verdict badge configuration
+        const getVerdictBadge = (verdict) => {
+          const configs = {
+            'PASS': { className: 'badge success', text: '✅ PASS' },
+            'WARN': { className: 'badge warning', text: '⚠️ WARN' },
+            'REVIEW_REQUIRED': { className: 'badge warning', text: '🔍 REVIEW' },
+            'BLOCK': { className: 'badge danger', text: '🚫 BLOCK' },
+            'COMPLETED': { className: 'badge success', text: '✅ COMPLETED' }
+          };
+          return configs[verdict] || { className: 'badge', text: verdict };
+        };
+        
+        // Handle click to view run details - opens in new tab
+        const handleViewRun = (run) => {
+          // ✅ Open in new tab with run-specific URL
+          window.open(`/run/${run.run_id}`, '_blank');
+        };
+        
+        if (loading) {
+          return e('div', {className: 'card', style: {textAlign: 'center', padding: '40px'}}, [
+            e('div', {style: {fontSize: '24px', marginBottom: '16px'}}, '⏳'),
+            e('div', null, 'Loading analysis history...')
+          ]);
+        }
+        
+        if (error) {
+          return e('div', {className: 'card', style: {textAlign: 'center', padding: '40px'}}, [
+            e('div', {style: {fontSize: '24px', marginBottom: '16px', color: 'var(--red)'}}, '❌'),
+            e('div', null, `Error: ${error}`),
+            e('button', {
+              className: 'btn',
+              style: {marginTop: '16px'},
+              onClick: () => window.location.reload()
+            }, 'Retry')
+          ]);
+        }
+        
+        if (runHistory.length === 0) {
+          return e('div', {className: 'card', style: {textAlign: 'center', padding: '40px'}}, [
+            e('div', {style: {fontSize: '48px', marginBottom: '16px'}}, '📭'),
+            e('div', {style: {fontSize: '18px', marginBottom: '8px'}}, 'No analysis runs yet'),
+            e('div', {style: {color: 'var(--muted)', marginTop: '8px'}}, 
+              `Run an analysis for ${selectedEnv} environment to see results here`)
+          ]);
+        }
+        
+        return e('div', {className: 'card'}, [
+          e('div', {style: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px'}}, [
+            e('h3', {style: {margin: '0'}}, `Analysis History (${runHistory.length} runs)`),
+            e('div', {style: {fontSize: '14px', color: 'var(--muted)'}}, 
+              `Environment: ${selectedEnv.toUpperCase()}`)
+          ]),
+          
+          // Run list
+          runHistory.map((run, index) => {
+            const badge = getVerdictBadge(run.verdict);
+            const metrics = run.metrics || {};
+            const branches = run.branches || {};
+            
+            return e('div', {
+              key: run.run_id || index,
+              className: 'commit-item',
+              style: {
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                borderLeft: `4px solid ${
+                  run.verdict === 'PASS' ? 'var(--green)' :
+                  run.verdict === 'WARN' ? 'var(--yellow)' :
+                  run.verdict === 'BLOCK' ? 'var(--red)' :
+                  'var(--blue)'
+                }`
+              },
+              onClick: () => handleViewRun(run),
+              onMouseEnter: (e) => {
+                e.currentTarget.style.background = '#f8f9fa';
+                e.currentTarget.style.transform = 'translateX(4px)';
+              },
+              onMouseLeave: (e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.transform = 'translateX(0)';
+              }
+            }, [
+              // Header row - Run number and verdict
+              e('div', {style: {display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center'}}, [
+                e('div', null, [
+                  e('strong', {style: {fontSize: '16px'}}, `Run #${runHistory.length - index}`),
+                  e('span', {style: {color: 'var(--muted)', marginLeft: '12px', fontSize: '14px'}}, 
+                    formatTimestamp(run.timestamp))
+                ]),
+                e('span', {className: badge.className}, badge.text)
+              ]),
+              
+              // Metrics row
+              e('div', {className: 'commit-meta', style: {marginBottom: '8px'}}, [
+                `${metrics.files_with_drift || 0} files drifted • `,
+                `${metrics.total_deltas || 0} changes • `,
+                `${metrics.policy_violations || 0} violations • `,
+                `Risk: ${metrics.overall_risk_level || 'unknown'}`
+              ]),
+              
+              // Branches info
+              e('div', {style: {fontSize: '12px', color: 'var(--muted)', marginBottom: '4px'}}, [
+                `Golden: ${branches.golden_branch || 'N/A'}`
+              ]),
+              e('div', {style: {fontSize: '12px', color: 'var(--muted)', marginBottom: '8px'}}, [
+                `Drift: ${branches.drift_branch || 'N/A'}`
+              ]),
+              
+              // Execution time
+              e('div', {style: {fontSize: '12px', color: 'var(--muted)', marginBottom: '8px'}}, [
+                `⏱️ Execution time: ${run.execution_time_seconds ? run.execution_time_seconds.toFixed(1) : 'N/A'}s`
+              ]),
+              
+              // View link
+              e('div', {
+                style: {
+                  marginTop: '8px',
+                  color: 'var(--primary)',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }
+              }, [
+                e('span', null, '→ Click to view detailed analysis'),
+                e('span', {style: {fontSize: '12px', color: 'var(--muted)'}}, `(${run.run_id.substring(0, 30)}...)`)
+              ])
+            ]);
+          })
+        ]);
+      }
+      
+      // ✅ Re-certify Confirmation Modal Component
+      function RecertifyModal({onClose, onConfirm, environment}) {
+        return e('div', {className: 'modal-overlay', onClick: onClose}, [
+          e('div', {className: 'modal', onClick: (e) => e.stopPropagation()}, [
+            e('h3', null, '🔄 Re-certify Environment'),
+            e('p', null, `This will run drift analysis to compare against the current golden branch and show you what has changed.`),
+            e('p', {style: {fontWeight: '600', color: 'var(--text)'}}, `Environment: ${environment}`),
+            
+            e('div', {style: {background: '#f0f9ff', padding: '12px', borderRadius: '8px', margin: '16px 0', border: '1px solid #0ea5e9'}}, [
+              e('strong', {style: {color: '#0c4a6e'}}, 'What happens next:'),
+              e('ul', {style: {margin: '8px 0 0 0', color: '#0c4a6e'}}, [
+                e('li', null, 'Run drift analysis to detect configuration changes'),
+                e('li', null, 'Switch to Drift Analysis tab to review results'),
+                e('li', null, 'You can then certify the drift and create a new golden branch')
+              ])
+            ]),
+            
+            e('div', {className: 'modal-actions'}, [
+              e('button', {className: 'btn', onClick: onClose}, 'Cancel'),
+              e('button', {className: 'btn primary', onClick: onConfirm}, 'Run Analysis')
+            ])
+          ])
+        ]);
+      }
+      
+      function StagingModal({onClose, onPromote, onReview, issueData}) {
+        return e('div', {className: 'modal-overlay', onClick: onClose}, [
+          e('div', {className: 'modal', onClick: (e) => e.stopPropagation()}, [
+            e('h3', null, '🔄 Staging Environment Actions'),
+            e('p', null, `Manage staging deployment for ${serviceConfig?.name || serviceId}`),
+            e('p', {style: {color: 'var(--yellow)'}}, 'Current Status: Pending Certification Review'),
+            
+            e('div', {style: {background: '#fff8dc', padding: '12px', borderRadius: '8px', margin: '16px 0'}}, [
+              e('strong', null, 'Available Actions:'),
+              e('ul', {style: {margin: '8px 0 0 0'}}, [
+                e('li', null, 'Promote changes to staging for testing'),
+                e('li', null, 'Request security team review'),
+                e('li', null, 'Schedule certification review meeting')
+              ])
+            ]),
+            
+            e('div', {className: 'modal-actions'}, [
+              e('button', {className: 'btn', onClick: onClose}, 'Cancel'),
+              e('button', {className: 'btn warning', onClick: onReview}, 'Request Review'),
+              e('button', {className: 'btn success', onClick: onPromote}, 'Promote to Staging')
+            ])
+          ])
+        ]);
+      }
+      
+      ReactDOM.createRoot(document.getElementById('root')).render(e(BranchEnvironmentPage));
+    })();
+  </script>
+</body>
+</html>
