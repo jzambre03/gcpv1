@@ -129,6 +129,16 @@ def check_branch_exists(repo_url: str, branch_name: str, gitlab_token: Optional[
         branch_exists = f"origin/{branch_name}" in remote_branches
         
         logger.info(f"Branch {branch_name} exists: {branch_exists}")
+        
+        # Enhanced debugging: Show all remote branches
+        if not branch_exists:
+            logger.warning(f"🔍 DEBUG: Branch '{branch_name}' not found. Available remote branches:")
+            for idx, ref_name in enumerate(sorted(remote_branches)[:10], 1):
+                logger.warning(f"   {idx}. {ref_name}")
+            if len(remote_branches) > 10:
+                logger.warning(f"   ... and {len(remote_branches) - 10} more branches")
+            logger.warning(f"🔍 DEBUG: Looking for: 'origin/{branch_name}'")
+        
         return branch_exists
         
     except GitCommandError as e:
