@@ -32,11 +32,13 @@ The **Guardrails & Policy Engine Agent** enforces security guardrails and organi
 
 ## Input
 
-**From:** Triaging-Routing Agent + Drift Detector Agent
+**From:** Drift Detector Agent
 
 **Format:** 
-- `llm_output.json` from Triaging-Routing Agent (categorized deltas)
-- `context_bundle.json` from Drift Detector Agent (original deltas with old/new values)
+- `context_bundle` from Drift Detector Agent (loaded from database via `run_id`)
+- Original deltas with old/new values (raw, before PII redaction)
+
+**Note:** This agent runs **BEFORE** Triaging-Routing Agent, so no LLM output is available yet.
 
 ## Output
 
@@ -97,10 +99,9 @@ The **Guardrails & Policy Engine Agent** enforces security guardrails and organi
 
 ## Processing Steps
 
-1. **Load Input Files**
-   - Load `llm_output.json` from Triaging-Routing Agent (categorized deltas)
-   - Load `context_bundle.json` from Drift Detector Agent (original deltas with old/new values)
-   - Combine data by matching delta IDs
+1. **Load Input Data**
+   - Load `context_bundle` from database using `run_id` (from Drift Detector Agent)
+   - Extract deltas with original old/new values (raw, unredacted)
 
 2. **PII Detection & Redaction**
    - Scan all delta values for PII patterns

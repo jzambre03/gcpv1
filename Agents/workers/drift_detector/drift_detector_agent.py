@@ -256,7 +256,7 @@ Execute the analysis now.
             else:
                 # Fall back to parsing the agent's response
                 logger.info("ℹ️ No instance variable result, parsing agent response...")
-                result_data = self._parse_agent_response(agent_response)
+            result_data = self._parse_agent_response(agent_response)
             
             # Validate we got the expected output
             if not isinstance(result_data, dict):

@@ -46,7 +46,7 @@ from pydantic import BaseModel, Field, field_validator
 from shared.db import (
     get_run_by_id, get_all_validation_runs,
     get_context_bundle, get_llm_output, get_policy_validation,
-    get_certification, get_report
+    get_certification, get_report, get_aggregated_results
 )
 
 # Strands agent system imports

@@ -53,9 +53,8 @@ class GuardrailsPolicyAgent(Agent):
             model=BedrockModel(model_id=config.bedrock_worker_model_id),
             system_prompt=system_prompt,
             tools=[
-                self.load_llm_output,
+                # NOTE: Removed load_llm_output and combine_delta_data - we run BEFORE Triaging now
                 self.load_context_bundle,
-                self.combine_delta_data,
                 self.scan_for_pii,
                 self.redact_sensitive_data,
                 self.scan_for_malicious_patterns,
@@ -235,12 +234,13 @@ Always err on the side of caution - better to flag than miss a security issue.
             logger.info(f"\n📦 Generating validated output...")
             logger.info("-" * 60)
             
+            # NOTE: We run BEFORE Triaging, so no LLM output exists yet
             validated_output = self._generate_validated_output(
                 validated_deltas,
                 pii_report,
                 intent_report,
                 policy_summary,
-                llm_output.get('summary', {}),
+                {},  # No LLM summary yet - we run before Triaging
                 context_bundle.get('overview', {})
             )
             
@@ -293,57 +293,14 @@ Always err on the side of caution - better to flag than miss a security issue.
                 metadata={"agent": "guardrails_policy"}
             )
 
-    def _combine_delta_data(self, llm_output: Dict[str, Any], context_bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Combine delta data from llm_output and context_bundle.
-        
-        Args:
-            llm_output: LLM output with categorized deltas (high/medium/low/allowed_variance)
-            context_bundle: Context bundle with original deltas (old/new values)
-            
-        Returns:
-            Combined deltas with both categorization and original values
-        """
-        # Extract all categorized deltas from llm_output
-        all_categorized_deltas = (
-            llm_output.get('high', []) +
-            llm_output.get('medium', []) +
-            llm_output.get('low', []) +
-            llm_output.get('allowed_variance', [])
-        )
-        
-        # Create lookup for original deltas by ID
-        original_deltas = {d.get('id'): d for d in context_bundle.get('deltas', [])}
-        
-        # Combine data
-        combined = []
-        for categorized_delta in all_categorized_deltas:
-            delta_id = categorized_delta.get('id')
-            original_delta = original_deltas.get(delta_id, {})
-            
-            # Determine risk level from bucket
-            risk_level = None
-            if categorized_delta in llm_output.get('high', []):
-                risk_level = 'high'
-            elif categorized_delta in llm_output.get('medium', []):
-                risk_level = 'medium'
-            elif categorized_delta in llm_output.get('low', []):
-                risk_level = 'low'
-            elif categorized_delta in llm_output.get('allowed_variance', []):
-                risk_level = 'allowed_variance'
-            
-            # Combine: categorization + original values
-            combined_delta = {
-                **categorized_delta,  # id, file, locator, why, remediation, rationale
-                'old': original_delta.get('old'),  # From context_bundle
-                'new': original_delta.get('new'),  # From context_bundle
-                'category': original_delta.get('category', 'unknown'),
-                'policy': original_delta.get('policy', {}),
-                'risk_level': risk_level  # From llm_output bucket
-            }
-            combined.append(combined_delta)
-        
-        return combined
+    # OBSOLETE: No longer needed since we run BEFORE Triaging (no LLM output exists yet)
+    # def _combine_delta_data(self, llm_output: Dict[str, Any], context_bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
+    #     """
+    #     [OBSOLETE] Combine delta data from llm_output and context_bundle.
+    #     This was used when Guardrails ran AFTER Triaging.
+    #     Now we run BEFORE Triaging, so we work directly with context_bundle deltas.
+    #     """
+    #     pass
 
     def _scan_and_redact_pii(self, deltas: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
@@ -618,21 +575,13 @@ Always err on the side of caution - better to flag than miss a security issue.
         }
 
     # Tool methods for LLM agent use
-    @tool
-    def load_llm_output(self, run_id: str) -> Dict[str, Any]:
-        """Load LLM output from database"""
-        try:
-            from shared.db import get_latest_llm_output
-            llm_output = get_latest_llm_output(run_id)
-            
-            if not llm_output:
-                return {"status": "error", "error": f"LLM output not found for run: {run_id}"}
-            
-            return {"status": "success", "llm_output": llm_output}
-        except Exception as e:
-            logger.error(f"Failed to load LLM output from database: {e}")
-            return {"status": "error", "error": str(e)}
-
+    
+    # OBSOLETE: No longer needed since we run BEFORE Triaging
+    # @tool
+    # def load_llm_output(self, run_id: str) -> Dict[str, Any]:
+    #     """[OBSOLETE] Load LLM output from database - not available when we run before Triaging"""
+    #     pass
+    
     @tool
     def load_context_bundle(self, run_id: str) -> Dict[str, Any]:
         """Load context bundle from database"""
@@ -648,10 +597,11 @@ Always err on the side of caution - better to flag than miss a security issue.
             logger.error(f"Failed to load context bundle from database: {e}")
             return {"status": "error", "error": str(e)}
 
-    @tool
-    def combine_delta_data(self, llm_output: Dict[str, Any], context_bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Combine delta data from both sources"""
-        return self._combine_delta_data(llm_output, context_bundle)
+    # OBSOLETE: No longer needed since we run BEFORE Triaging
+    # @tool
+    # def combine_delta_data(self, llm_output: Dict[str, Any], context_bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
+    #     """[OBSOLETE] Combine delta data from both sources - not needed when we run before Triaging"""
+    #     pass
 
     @tool
     def scan_for_pii(self, deltas: list) -> Dict[str, Any]:
