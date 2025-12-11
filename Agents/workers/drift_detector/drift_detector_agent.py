@@ -253,13 +253,16 @@ Execute the analysis now.
             if self._last_tool_result is not None:
                 logger.info("✅ Retrieved result from instance variable (tool stored it directly)")
                 result_data = self._last_tool_result
+                logger.info(f"🔍 DEBUG: result_data keys: {list(result_data.keys()) if isinstance(result_data, dict) else 'NOT A DICT'}")
             else:
                 # Fall back to parsing the agent's response
                 logger.info("ℹ️ No instance variable result, parsing agent response...")
-            result_data = self._parse_agent_response(agent_response)
+                result_data = self._parse_agent_response(agent_response)
+                logger.info(f"🔍 DEBUG: Parsed result_data keys: {list(result_data.keys()) if isinstance(result_data, dict) else 'NOT A DICT'}")
             
             # Validate we got the expected output
             if not isinstance(result_data, dict):
+                logger.error(f"❌ result_data is not a dict, type: {type(result_data)}, value: {str(result_data)[:200]}")
                 return TaskResponse(
                     task_id=task.task_id,
                     status="failure",
@@ -271,6 +274,7 @@ Execute the analysis now.
             
             # Check for errors
             if result_data.get('status') == 'error':
+                logger.error(f"❌ Tool returned error status: {result_data.get('error', 'Unknown error')}")
                 return TaskResponse(
                     task_id=task.task_id,
                     status="failure",
@@ -284,7 +288,12 @@ Execute the analysis now.
             bundle_data = result_data.get('bundle_data')
             summary = result_data.get('summary', {})
             
+            logger.info(f"🔍 DEBUG: bundle_data present: {bundle_data is not None}")
+            logger.info(f"🔍 DEBUG: summary present: {summary is not None}")
+            
             if not bundle_data:
+                logger.error(f"❌ bundle_data is None. result_data keys: {list(result_data.keys())}")
+                logger.error(f"❌ result_data content: {str(result_data)[:500]}")
                 return TaskResponse(
                     task_id=task.task_id,
                     status="failure",
