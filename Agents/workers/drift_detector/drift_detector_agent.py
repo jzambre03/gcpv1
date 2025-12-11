@@ -50,7 +50,9 @@ from shared.drift_analyzer import (
 logger = logging.getLogger(__name__)
 
 # Define PROJECT_ROOT for policies.yaml lookup
-PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
+# __file__ = .../gcpv1/Agents/workers/drift_detector/drift_detector_agent.py
+# Need to go up 4 levels to reach project root
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.resolve()
 
 
 def is_config_file(file_path: str) -> bool:
@@ -108,6 +110,7 @@ class DriftDetectorAgent(Agent):
             ]
         )
         self.config = config
+        self._last_tool_result = None  # Store last tool execution result
 
     def _get_system_prompt(self) -> str:
         return """You are the Drift Detector Agent in the Golden Config AI system.
@@ -171,6 +174,9 @@ Return path to context_bundle.json with structured deltas.
         start_time = time.time()
         
         try:
+            # Reset tool result storage
+            self._last_tool_result = None
+            
             logger.info(f"🔍 Drift Detector processing task: {task.task_id}")
             
             params = task.parameters
@@ -243,8 +249,14 @@ Execute the analysis now.
                     if len(agent_response.structured_output) > 0:
                         logger.info(f"🔍 DEBUG: Last tool result type: {type(agent_response.structured_output[-1])}")
             
-            # Parse the agent's response
-            result_data = self._parse_agent_response(agent_response)
+            # PRIORITY: Check if tool stored result directly in instance variable
+            if self._last_tool_result is not None:
+                logger.info("✅ Retrieved result from instance variable (tool stored it directly)")
+                result_data = self._last_tool_result
+            else:
+                # Fall back to parsing the agent's response
+                logger.info("ℹ️ No instance variable result, parsing agent response...")
+                result_data = self._parse_agent_response(agent_response)
             
             # Validate we got the expected output
             if not isinstance(result_data, dict):
@@ -858,7 +870,7 @@ Execute the analysis now.
             except Exception as e_cleanup:
                 logger.warning(f"Failed to clean up temp directory {output_dir}: {e_cleanup}")
             
-            return {
+            result = {
                 "status": "success",
                 "bundle_data": bundle_data,
                 "summary": summary,
@@ -866,6 +878,11 @@ Execute the analysis now.
                 "meta": bundle_data.get("meta", {}),
                 "timestamp": datetime.now().isoformat()
             }
+            
+            # Store result in instance variable for retrieval
+            self._last_tool_result = result
+            
+            return result
             
         except Exception as e:
             logger.exception(f"❌ Error in drift analysis: {e}")
