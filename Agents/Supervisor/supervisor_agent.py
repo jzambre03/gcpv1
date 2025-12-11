@@ -566,11 +566,8 @@ def aggregate_validation_results(
         pipeline_data = pipeline_results.get("data", {})
         agent_results = pipeline_data.get("results", {})
         
-        # Get certification results from pipeline response
+        # Get certification results from pipeline response (fallback)
         cert_results = agent_results.get("certification_engine", {})
-        confidence_score = cert_results.get("confidence_score", 0)
-        certification_decision = cert_results.get("certification_decision", "HUMAN_REVIEW")
-        snapshot_branch = cert_results.get("snapshot_branch")
         
         # Load context bundle from database
         logger.info(f"Loading context bundle from database for run: {run_id}")
@@ -627,13 +624,23 @@ def aggregate_validation_results(
         else:
             logger.warning(f"No LLM output found in database for run: {run_id}")
         
-        # Load certification result from database
-        cert_data = {}
+        # Load certification result from database (PRIORITY: database is source of truth)
         logger.info(f"Loading certification from database for run: {run_id}")
         cert_data = get_latest_certification(run_id)
         
-        if not cert_data:
-            logger.warning(f"No certification found in database for run: {run_id}")
+        # Use database values if available, otherwise fall back to pipeline results
+        if cert_data:
+            # Database is source of truth - use these values
+            confidence_score = cert_data.get("confidence_score", 0)
+            certification_decision = cert_data.get("decision", "HUMAN_REVIEW")
+            snapshot_branch = cert_data.get("certified_snapshot_branch")
+            logger.info(f"✅ Using certification from database: Decision={certification_decision}, Score={confidence_score}/100")
+        else:
+            # Fallback to pipeline results if database doesn't have it yet
+            logger.warning(f"No certification found in database for run: {run_id}, using pipeline results")
+            confidence_score = cert_results.get("confidence_score", 0)
+            certification_decision = cert_results.get("certification_decision", "HUMAN_REVIEW")
+            snapshot_branch = cert_results.get("snapshot_branch")
         
         # Intelligent verdict logic (incorporate certification decision)
         if certification_decision == "AUTO_MERGE":
@@ -1569,39 +1576,89 @@ def run_validation(
     
     logger.info(f"Validation completed in {execution_time}ms")
     
+    # Extract the actual run_id from the database (most reliable method)
+    # The supervisor agent creates the run_id and saves it to the database
+    actual_run_id = None
+    
+    try:
+        from shared.db import get_all_validation_runs
+        import re
+        
+        # Get all validation runs from the database
+        runs = get_all_validation_runs()
+        if runs:
+            # Find the most recent run that matches this mr_iid and was created in the last 5 minutes
+            recent_time = datetime.now().timestamp() - 300  # 5 minutes ago
+            
+            matching_runs = []
+            for run in runs:
+                run_id = run.get('run_id', '')
+                # Check if this run_id contains the mr_iid
+                if mr_iid in run_id:
+                    # Extract timestamp from run_id format: run_YYYYMMDD_HHMMSS_*
+                    match = re.search(r'run_(\d{8}_\d{6})_', run_id)
+                    if match:
+                        timestamp_str = match.group(1)
+                        try:
+                            run_time = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S').timestamp()
+                            # Only consider runs from the last 5 minutes
+                            if run_time >= recent_time:
+                                matching_runs.append((run_time, run_id))
+                        except ValueError:
+                            continue
+            
+            # Get the most recent matching run
+            if matching_runs:
+                matching_runs.sort(reverse=True)  # Sort by timestamp descending
+                actual_run_id = matching_runs[0][1]
+                logger.info(f"✅ Found run_id from database: {actual_run_id}")
+    except Exception as e:
+        logger.warning(f"Could not find run_id from database: {e}")
+    
+    # Fallback: try to extract from agent's response text
+    if not actual_run_id:
+        try:
+            import re
+            result_text = str(result)
+            # Look for run_id pattern in the response
+            match = re.search(r'run_\d{8}_\d{6}_[a-zA-Z0-9_]+', result_text)
+            if match:
+                actual_run_id = match.group(0)
+                logger.info(f"✅ Extracted run_id from agent response: {actual_run_id}")
+        except Exception as e:
+            logger.warning(f"Could not extract run_id from response: {e}")
+    
+    # Final fallback: generate a timestamp-based run_id (but log a warning)
+    if not actual_run_id:
+        actual_run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{mr_iid}"
+        logger.warning(f"⚠️ Could not extract actual run_id, using fallback: {actual_run_id}")
+    
     # Load the latest LLM output and aggregated results from database for rich UI data
     llm_output_data = {}
     aggregated_data = {}
     
     try:
-        from shared.db import get_latest_llm_output, get_latest_aggregated_results
+        from shared.db import get_latest_llm_output, get_aggregated_results
         
-        # Try to extract service name and run_id for DB queries
-        run_id_match = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{mr_iid}"
-        
-        # Load from database
-        llm_output_data = get_latest_llm_output(run_id=run_id_match) or {}
-        
-        # For aggregated results, we need service name
-        # Extract from project_id (format: service_environment)
-        service_name = project_id.rsplit('_', 1)[0] if '_' in project_id else project_id
-        aggregated_data = get_latest_aggregated_results(service_name, environment) or {}
+        # Load from database using the ACTUAL run_id (most reliable)
+        llm_output_data = get_latest_llm_output(run_id=actual_run_id) or {}
+        aggregated_data = get_aggregated_results(actual_run_id) or {}
         
         if llm_output_data:
-            logger.info(f"✅ Loaded LLM output for {environment} from database")
+            logger.info(f"✅ Loaded LLM output for run {actual_run_id} from database")
         else:
-            logger.warning(f"⚠️ No LLM output found in database for run: {run_id_match}")
+            logger.warning(f"⚠️ No LLM output found in database for run: {actual_run_id}")
         
         if aggregated_data:
-            logger.info(f"✅ Loaded aggregated results for {environment} from database")
+            logger.info(f"✅ Loaded aggregated results for run {actual_run_id} from database")
         else:
-            logger.warning(f"⚠️ No aggregated results found in database for {service_name}/{environment}")
+            logger.warning(f"⚠️ No aggregated results found in database for run: {actual_run_id}")
     except Exception as e:
         logger.warning(f"Could not load analysis data from database: {e}")
     
     # Build comprehensive response with data for UI
     return {
-        "run_id": f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{mr_iid}",
+        "run_id": actual_run_id,  # Use the ACTUAL run_id, not a regenerated one
         "verdict": aggregated_data.get("verdict", "COMPLETED"),
         "summary": str(result),
         "execution_time_ms": execution_time,
