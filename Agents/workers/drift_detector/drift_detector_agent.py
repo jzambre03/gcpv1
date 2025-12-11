@@ -234,6 +234,15 @@ Execute the analysis now.
             
             logger.info("✅ Agent completed execution")
             
+            # Debug: Inspect agent response structure
+            logger.info(f"🔍 DEBUG: Agent response type: {type(agent_response)}")
+            if hasattr(agent_response, 'structured_output'):
+                logger.info(f"🔍 DEBUG: structured_output type: {type(agent_response.structured_output)}")
+                if isinstance(agent_response.structured_output, list):
+                    logger.info(f"🔍 DEBUG: structured_output length: {len(agent_response.structured_output)}")
+                    if len(agent_response.structured_output) > 0:
+                        logger.info(f"🔍 DEBUG: Last tool result type: {type(agent_response.structured_output[-1])}")
+            
             # Parse the agent's response
             result_data = self._parse_agent_response(agent_response)
             
@@ -324,14 +333,36 @@ Execute the analysis now.
         Parse the agent's response to extract structured data.
         
         Priority order:
-        1. tool_results (most reliable - actual tool return values)
-        2. Direct dict response
-        3. JSON in content/messages
-        4. JSON extracted from markdown code blocks
-        5. JSON extracted from mixed text
+        1. structured_output (Strands AI returns tool results here)
+        2. tool_results (legacy support)
+        3. Direct dict response
+        4. JSON in content/messages
+        5. JSON extracted from markdown code blocks
+        6. JSON extracted from mixed text
         """
         try:
-            # CASE 1: Response has tool_results attribute (HIGHEST PRIORITY)
+            # CASE 0: Check structured_output attribute (Strands AI framework)
+            if hasattr(agent_response, 'structured_output') and agent_response.structured_output:
+                logger.info("Found structured_output from Strands AI")
+                structured_output = agent_response.structured_output
+                
+                # structured_output is typically a list of tool results
+                if isinstance(structured_output, list) and len(structured_output) > 0:
+                    last_tool_result = structured_output[-1]  # Get last tool call
+                    logger.info(f"Last tool result type: {type(last_tool_result)}")
+                    
+                    # The tool result should be a dict from run_drift_analysis
+                    if isinstance(last_tool_result, dict):
+                        logger.info("✅ Extracted dict from structured_output")
+                        return last_tool_result
+                    
+                    # Sometimes it's wrapped in another structure
+                    if hasattr(last_tool_result, 'output'):
+                        if isinstance(last_tool_result.output, dict):
+                            logger.info("✅ Extracted dict from structured_output.output")
+                            return last_tool_result.output
+            
+            # CASE 1: Response has tool_results attribute (HIGHEST PRIORITY - legacy)
             if hasattr(agent_response, 'tool_results') and agent_response.tool_results:
                 logger.debug(f"Found tool_results with {len(agent_response.tool_results)} results")
                 last_result = agent_response.tool_results[-1]
