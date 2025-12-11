@@ -376,6 +376,47 @@ def get_latest_context_bundle(run_id: str) -> Optional[Dict[str, Any]]:
         return json.loads(row['bundle_data']) if row else None
 
 
+def update_context_bundle_deltas(run_id: str, redacted_deltas: List[Dict[str, Any]]) -> None:
+    """
+    Update context bundle with PII-redacted deltas.
+    
+    CRITICAL SECURITY: This function updates the context_bundle with redacted deltas
+    so that downstream agents (Triaging LLM) only see sanitized data.
+    
+    Args:
+        run_id: Validation run ID
+        redacted_deltas: List of deltas with PII redacted
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Get existing context bundle
+        cursor.execute("""
+            SELECT bundle_data FROM context_bundles 
+            WHERE run_id = ? ORDER BY created_at DESC LIMIT 1
+        """, (run_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            logger.error(f"No context bundle found for run_id: {run_id}")
+            return
+        
+        # Update deltas in bundle_data
+        bundle_data = json.loads(row['bundle_data'])
+        bundle_data['deltas'] = redacted_deltas
+        bundle_data['pii_redacted'] = True  # Flag that PII has been redacted
+        bundle_data['redacted_at'] = datetime.now().isoformat()
+        
+        # Update the database
+        cursor.execute("""
+            UPDATE context_bundles 
+            SET bundle_data = ?
+            WHERE run_id = ?
+        """, (json.dumps(bundle_data), run_id))
+        
+        logger.info(f"✅ Updated context bundle with {len(redacted_deltas)} redacted deltas for run: {run_id}")
+
+
 # ============================================================================
 # Config Deltas
 # ============================================================================

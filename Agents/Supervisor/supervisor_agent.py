@@ -40,7 +40,7 @@ SYSTEM_PROMPT = """You are the Supervisor Agent - the orchestration brain for Go
 Your core responsibilities:
 1. Coordinate the validation workflow across 5 specialized worker agents
 2. Create validation runs with unique identifiers
-3. Execute the multi-agent workflow (Config Collector → Drift Detector → Triaging-Routing → Guardrails & Policy → Certification Engine)
+3. Execute the multi-agent workflow (Config Collector → Drift Detector → Guardrails & Policy → Triaging-Routing → Certification Engine)
 4. Aggregate results from all agents
 5. Make final business decisions (PASS/FAIL)
 6. Format comprehensive, actionable reports
@@ -55,12 +55,12 @@ Your expertise:
 
 Your workflow:
 1. Start by creating a unique validation run ID
-2. Execute the 5-agent pipeline:
+2. Execute the 5-agent pipeline in CORRECT ORDER:
    - Config Collector: Extracts config files, creates golden/drift snapshots
    - Drift Detector: Performs precision drift analysis, generates context bundle
-   - Triaging-Routing: LLM-based risk analysis, categorizes deltas
-   - Guardrails & Policy: PII redaction, intent guard, policy validation
-   - Certification Engine: Calculates confidence score, makes final decision, creates certified snapshots
+   - Guardrails & Policy: PII redaction, security scanning (MUST run BEFORE LLM)
+   - Triaging-Routing: LLM-based risk analysis on sanitized data, categorizes deltas
+   - Certification Engine: Calculates confidence score, makes final decision
 3. Load and review outputs from all agents
 4. Aggregate policy violations, risk assessments, and certification results
 5. Apply business logic for final approval decision
@@ -72,6 +72,8 @@ Your workflow:
    - Remediation suggestions
    - Run metadata
 7. Return comprehensive validation result
+
+CRITICAL: Guardrails MUST run before Triaging to ensure PII is redacted before LLM analysis.
 
 You are the final authority. Be thorough, fair, and communicative.
 Always maintain the complete audit trail.
@@ -138,13 +140,14 @@ def execute_worker_pipeline(
     """
     Execute the 5-agent database-based pipeline with dynamic branch creation and comprehensive analysis.
     
-    This orchestrates five worker agents in sequence using DATABASE-ONLY communication:
+    This orchestrates five worker agents in CORRECT SECURITY ORDER using DATABASE-ONLY communication:
     1. Config Collector - Extracts config files, creates golden/drift snapshots (Git operations)
     2. Drift Detector - Performs precision drift analysis → saves to DB (context_bundles table)
-    3. Triaging-Routing - LLM-based risk analysis → saves to DB (llm_outputs table)
-    4. Guardrails & Policy - PII redaction, security scanning → saves to DB (policy_validations table)
+    3. Guardrails & Policy - PII redaction, security scanning → saves to DB (policy_validations table) [RUNS BEFORE LLM]
+    4. Triaging-Routing - LLM-based risk analysis on sanitized data → saves to DB (llm_outputs table)
     5. Certification Engine - Final decision, snapshot creation → saves to DB (certifications table)
     
+    CRITICAL SECURITY: Guardrails MUST run before Triaging to ensure PII is redacted before LLM sees the data.
     All inter-agent communication happens via database queries using run_id.
     
     Args:
@@ -332,64 +335,9 @@ def execute_worker_pipeline(
             "summary": summary
         }
         
-        # Step 3: Triaging-Routing
+        # Step 3: Guardrails & Policy (SECURITY: Must run BEFORE LLM to redact PII)
         logger.info("=" * 60)
-        logger.info("Step 3/5: Running Triaging-Routing Agent")
-        logger.info("=" * 60)
-        triaging_routing = TriagingRoutingAgent(config)
-        
-        triaging_task = TaskRequest(
-            task_id=f"{run_id}_triaging_routing",
-            task_type="triage_and_route",
-            parameters={
-                "run_id": run_id,
-                "environment": environment
-            }
-        )
-        
-        triaging_result = triaging_routing.process_task(triaging_task)
-        
-        if triaging_result.status != "success":
-            logger.error(f"Triaging-Routing failed: {triaging_result.error}")
-            return {
-                "success": False,
-                "error": f"Triaging-Routing failed: {triaging_result.error}",
-                "data": {
-                    "status": "partial",
-                    "completed_agents": 2,
-                    "failed_agents": 1,
-                    "failed_at": "triaging_routing",
-                    "results": results
-                }
-            }
-        
-        # Validate result structure
-        if not triaging_result.result or not isinstance(triaging_result.result, dict):
-            logger.error(f"Triaging-Routing returned invalid result structure: {type(triaging_result.result)}")
-            return {
-                "success": False,
-                "error": "Triaging-Routing returned invalid result structure",
-                "data": {
-                    "status": "partial",
-                    "completed_agents": 2,
-                    "failed_agents": 1,
-                    "failed_at": "triaging_routing",
-                    "results": results
-                }
-            }
-        
-        triaging_summary = triaging_result.result.get("summary", {})
-        
-        logger.info(f"✅ Triaging-Routing completed: High={triaging_summary.get('high_risk', 0)}, Medium={triaging_summary.get('medium_risk', 0)}, Low={triaging_summary.get('low_risk', 0)}")
-        
-        results['triaging_routing'] = {
-            "status": "success",
-            "summary": triaging_summary
-        }
-        
-        # Step 4: Guardrails & Policy
-        logger.info("=" * 60)
-        logger.info("Step 4/5: Running Guardrails & Policy Agent")
+        logger.info("Step 3/5: Running Guardrails & Policy Agent")
         logger.info("=" * 60)
         guardrails_policy = GuardrailsPolicyAgent(config)
         
@@ -411,7 +359,7 @@ def execute_worker_pipeline(
                 "error": f"Guardrails & Policy failed: {guardrails_result.error}",
                 "data": {
                     "status": "partial",
-                    "completed_agents": 3,
+                    "completed_agents": 2,
                     "failed_agents": 1,
                     "failed_at": "guardrails_policy",
                     "results": results
@@ -426,7 +374,7 @@ def execute_worker_pipeline(
                 "error": "Guardrails & Policy returned invalid result structure",
                 "data": {
                     "status": "partial",
-                    "completed_agents": 3,
+                    "completed_agents": 2,
                     "failed_agents": 1,
                     "failed_at": "guardrails_policy",
                     "results": results
@@ -440,6 +388,61 @@ def execute_worker_pipeline(
         results['guardrails_policy'] = {
             "status": "success",
             "summary": guardrails_summary
+        }
+        
+        # Step 4: Triaging-Routing (Now receives PII-redacted data from Guardrails)
+        logger.info("=" * 60)
+        logger.info("Step 4/5: Running Triaging-Routing Agent")
+        logger.info("=" * 60)
+        triaging_routing = TriagingRoutingAgent(config)
+        
+        triaging_task = TaskRequest(
+            task_id=f"{run_id}_triaging_routing",
+            task_type="triage_and_route",
+            parameters={
+                "run_id": run_id,
+                "environment": environment
+            }
+        )
+        
+        triaging_result = triaging_routing.process_task(triaging_task)
+        
+        if triaging_result.status != "success":
+            logger.error(f"Triaging-Routing failed: {triaging_result.error}")
+            return {
+                "success": False,
+                "error": f"Triaging-Routing failed: {triaging_result.error}",
+                "data": {
+                    "status": "partial",
+                    "completed_agents": 3,
+                    "failed_agents": 1,
+                    "failed_at": "triaging_routing",
+                    "results": results
+                }
+            }
+        
+        # Validate result structure
+        if not triaging_result.result or not isinstance(triaging_result.result, dict):
+            logger.error(f"Triaging-Routing returned invalid result structure: {type(triaging_result.result)}")
+            return {
+                "success": False,
+                "error": "Triaging-Routing returned invalid result structure",
+                "data": {
+                    "status": "partial",
+                    "completed_agents": 3,
+                    "failed_agents": 1,
+                    "failed_at": "triaging_routing",
+                    "results": results
+                }
+            }
+        
+        triaging_summary = triaging_result.result.get("summary", {})
+        
+        logger.info(f"✅ Triaging-Routing completed: High={triaging_summary.get('high_risk', 0)}, Medium={triaging_summary.get('medium_risk', 0)}, Low={triaging_summary.get('low_risk', 0)}")
+        
+        results['triaging_routing'] = {
+            "status": "success",
+            "summary": triaging_summary
         }
         
         # Step 5: Certification Engine
@@ -1462,7 +1465,7 @@ def create_supervisor_agent() -> Agent:
     # Create agent with orchestration tools (simplified to 5 tools)
     agent = Agent(
         name="supervisor",
-        description="Orchestrates 5-agent validation workflow (Config Collector → Drift Detector → Triaging-Routing → Guardrails & Policy → Certification Engine)",
+        description="Orchestrates 5-agent validation workflow (Config Collector → Drift Detector → Guardrails & Policy → Triaging-Routing → Certification Engine)",
         system_prompt=SYSTEM_PROMPT,
         model=model,
         tools=[
@@ -1537,11 +1540,11 @@ def run_validation(
     
     Complete workflow:
     1. Create a unique validation run ID
-    2. Execute the 5-agent database-only pipeline:
+    2. Execute the 5-agent database-only pipeline in CORRECT ORDER:
        - Config Collector: Extract config files, create golden/drift snapshots (Git operations only)
        - Drift Detector: Perform precision drift analysis → save to DB (context_bundles table)
-       - Triaging-Routing: LLM-based risk analysis → fetch from DB, save to DB (llm_outputs table)
-       - Guardrails & Policy: PII redaction, security scanning → fetch from DB, save to DB (policy_validations table)
+       - Guardrails & Policy: PII redaction, security scanning → fetch from DB, save to DB (policy_validations table) [MUST RUN BEFORE LLM]
+       - Triaging-Routing: LLM-based risk analysis on sanitized data → fetch from DB, save to DB (llm_outputs table)
        - Certification Engine: Final decision, snapshot creation → fetch from DB, save to DB (certifications table)
     3. Aggregate results from all 5 agents (fetch all data from DB using run_id)
     4. Format a comprehensive validation report with:

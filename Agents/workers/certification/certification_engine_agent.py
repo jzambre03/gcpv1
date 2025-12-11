@@ -168,22 +168,10 @@ Be thorough and conservative - better to require review than allow risky changes
             logger.info(f"✅ Confidence Score: {confidence_score}/100")
             logger.info(f"✅ Decision: {decision}")
             
-            # Step 5: Create certified snapshot if AUTO_MERGE
+            # Step 5: Skip automatic snapshot creation - will be done manually via UI
+            # Golden branch creation should only happen when user clicks "Certify" in dashboard
             snapshot_branch = None
-            if decision == "AUTO_MERGE" and repo_url and golden_branch and drift_branch:
-                logger.info("🌿 Creating certified snapshot branch...")
-                snapshot_result = self._create_certified_snapshot(
-                    repo_url=repo_url,
-                    golden_branch=golden_branch,
-                    drift_branch=drift_branch,
-                    service_id=service_id,
-                    environment=environment,
-                    approved_deltas=validated_deltas,
-                    confidence_score=confidence_score
-                )
-                snapshot_branch = snapshot_result.get('snapshot_branch')
-                if snapshot_branch:
-                    logger.info(f"✅ Certified snapshot branch created: {snapshot_branch}")
+            logger.info("ℹ️  Golden branch creation skipped - requires manual certification via UI")
             
             # Step 6: Generate certification report
             logger.info("📄 Generating certification report...")

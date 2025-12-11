@@ -3,15 +3,18 @@ Guardrails & Policy Engine Agent - Security & Compliance (Database-Only)
 
 This agent enforces security guardrails and organizational policies.
 
+**CRITICAL: This agent MUST run BEFORE Triaging to redact PII before LLM sees the data.**
+
 Responsibilities:
-- Fetch llm_output and context_bundle from database using run_id
+- Fetch context_bundle from database using run_id
 - PII redaction (detect and scrub sensitive data)
+- Update context_bundle in database with redacted values
 - Intent guard (detect malicious patterns)
 - Policy validation (enforce policies.yaml rules)
-- Save policy_validation to database (policy_validations table)
+- Save redacted context_bundle back to database for Triaging to consume
 
-Input: run_id (fetches llm_output and context_bundle from DB)
-Output: Database record in policy_validations table, no JSON files
+Input: run_id (fetches context_bundle from DB)
+Output: Updated context_bundle with redacted data + policy_validation record in database
 """
 
 import logging
@@ -113,40 +116,12 @@ Always err on the side of caution - better to flag than miss a security issue.
                     metadata={"agent": "guardrails_policy"}
                 )
             
-            # Load llm_output from database
-            logger.info(f"\n📂 Loading LLM output from database for run: {run_id}")
+            # Load context_bundle from database (ONLY source before LLM redaction)
+            logger.info(f"\n📂 Loading context bundle from database for run: {run_id}")
             logger.info("-" * 60)
             
             try:
-                from shared.db import get_latest_llm_output, get_latest_context_bundle
-                
-                llm_output = get_latest_llm_output(run_id)
-                if not llm_output:
-                    return TaskResponse(
-                        task_id=task.task_id,
-                        status="failure",
-                        result={},
-                        error=f"LLM output not found in database for run: {run_id}",
-                        processing_time_seconds=time.time() - start_time,
-                        metadata={"agent": "guardrails_policy"}
-                    )
-                
-                logger.info(f"✅ LLM output loaded from database")
-                
-            except Exception as e:
-                return TaskResponse(
-                    task_id=task.task_id,
-                    status="failure",
-                    result={},
-                    error=f"Failed to load LLM output from database: {str(e)}",
-                    processing_time_seconds=time.time() - start_time,
-                    metadata={"agent": "guardrails_policy"}
-                )
-            
-            # Load context_bundle from database
-            logger.info(f"📂 Loading context bundle from database for run: {run_id}")
-            
-            try:
+                from shared.db import get_latest_context_bundle
                 context_bundle = get_latest_context_bundle(run_id)
                 if not context_bundle:
                     return TaskResponse(
@@ -170,14 +145,14 @@ Always err on the side of caution - better to flag than miss a security issue.
                     metadata={"agent": "guardrails_policy"}
                 )
             
-            logger.info(f"✅ Data loaded successfully from database")
+            logger.info(f"✅ Context bundle loaded successfully from database")
             
-            # Combine delta data from both sources
-            logger.info(f"\n🔗 Combining delta data from both sources...")
+            # Extract deltas from context bundle (NO LLM OUTPUT YET - we run BEFORE Triaging)
+            logger.info(f"\n🔗 Extracting deltas from context bundle...")
             logger.info("-" * 60)
             
-            combined_deltas = self._combine_delta_data(llm_output, context_bundle)
-            logger.info(f"✅ Combined {len(combined_deltas)} deltas")
+            combined_deltas = context_bundle.get('deltas', [])
+            logger.info(f"✅ Found {len(combined_deltas)} deltas to process")
             
             if not combined_deltas:
                 logger.warning("No deltas to process - saving empty policy validation")
@@ -221,6 +196,21 @@ Always err on the side of caution - better to flag than miss a security issue.
             logger.info(f"✅ PII scan complete:")
             logger.info(f"   Instances found: {pii_report['instances_found']}")
             logger.info(f"   Types detected: {', '.join(pii_report['types']) if pii_report['types'] else 'none'}")
+            
+            # CRITICAL SECURITY: Update context_bundle with redacted deltas and save back to DB
+            # This ensures Triaging LLM only sees sanitized data
+            logger.info(f"\n💾 Updating context bundle with redacted deltas...")
+            logger.info("-" * 60)
+            
+            try:
+                from shared.db import update_context_bundle_deltas
+                context_bundle['deltas'] = pii_redacted_deltas
+                update_context_bundle_deltas(run_id, pii_redacted_deltas)
+                logger.info(f"✅ Context bundle updated with {len(pii_redacted_deltas)} redacted deltas")
+                logger.info(f"   Triaging agent will now receive PII-redacted data")
+            except Exception as e:
+                logger.error(f"Failed to update context bundle with redacted data: {e}")
+                # Continue processing but log the error
             
             # Scan for malicious patterns
             logger.info(f"\n🛡️ Scanning for malicious patterns...")
