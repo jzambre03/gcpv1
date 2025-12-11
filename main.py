@@ -106,12 +106,12 @@ DEFAULT_CONFIG_PATHS = [
 
 # Service Configuration
 SERVICES_CONFIG = {
-    # Active Service
-    "gcp": {
-        "name": "GCP Project",
-        "repo_url": "https://gitlab.com/jayeshszambre/gcp.git",
+    # Active Service - CXP PTG Adapter (matches existing database data)
+    "cxp_ptg_adapter": {
+        "name": "CXP PTG Adapter",
+        "repo_url": "https://gitlab.verizon.com/saja9l7/cxp-ptg-adapter.git",
         "main_branch": "main",
-        "environments": ["prod", "dev", "staging"],
+        "environments": ["prod", "alpha", "beta1", "beta2"],
         "config_paths": DEFAULT_CONFIG_PATHS  # Can be customized per service
     },
     
@@ -1023,11 +1023,6 @@ def get_last_service_result(service_id: str, environment: Optional[str] = None):
             if environment is None or req_params.get("environment") == environment:
                 return latest_results
     
-    # Then check stored files
-    service_results_dir = Path("config_data") / "service_results" / service_id
-    if not service_results_dir.exists():
-        return None
-    
     # Try to load from database
     try:
         if environment:
@@ -1040,12 +1035,29 @@ def get_last_service_result(service_id: str, environment: Optional[str] = None):
             
             if filtered_runs:
                 run_id = filtered_runs[0]['run_id']
-                # Try to get aggregated results
+                # Build comprehensive result from database
                 from shared.db import get_aggregated_results
-                result_data = get_aggregated_results(run_id)
-                if result_data:
+                aggregated = get_aggregated_results(run_id)
+                llm_output = get_llm_output(run_id)
+                
+                if aggregated or llm_output:
+                    validation_result = {
+                        "run_id": run_id,
+                        "llm_output": llm_output
+                    }
+                    # Add aggregated data if available
+                    if aggregated:
+                        validation_result.update(aggregated)
+                    
+                    result = {
+                        "run_id": run_id,
+                        "service_id": service_id,
+                        "environment": environment,
+                        "timestamp": filtered_runs[0].get('created_at'),
+                        "validation_result": validation_result
+                    }
                     print(f"✅ Loaded stored result for {service_id}/{environment} from database")
-                    return result_data
+                    return result
         else:
             # No environment specified - find most recent from any environment
             all_runs = get_all_validation_runs()
@@ -1053,13 +1065,33 @@ def get_last_service_result(service_id: str, environment: Optional[str] = None):
             
             if service_runs:
                 run_id = service_runs[0]['run_id']
+                env = service_runs[0].get('environment', 'unknown')
                 from shared.db import get_aggregated_results
-                result_data = get_aggregated_results(run_id)
-                if result_data:
+                aggregated = get_aggregated_results(run_id)
+                llm_output = get_llm_output(run_id)
+                
+                if aggregated or llm_output:
+                    validation_result = {
+                        "run_id": run_id,
+                        "llm_output": llm_output
+                    }
+                    # Add aggregated data if available
+                    if aggregated:
+                        validation_result.update(aggregated)
+                    
+                    result = {
+                        "run_id": run_id,
+                        "service_id": service_id,
+                        "environment": env,
+                        "timestamp": service_runs[0].get('created_at'),
+                        "validation_result": validation_result
+                    }
                     print(f"✅ Loaded stored result for {service_id} from database")
-                    return result_data
+                    return result
     except Exception as e:
         print(f"⚠️ Failed to load stored result from database: {e}")
+        import traceback
+        traceback.print_exc()
     
     return None
 

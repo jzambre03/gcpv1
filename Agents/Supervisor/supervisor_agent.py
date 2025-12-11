@@ -92,10 +92,10 @@ def create_validation_run(
     target_branch: str
 ) -> dict:
     """
-    Create a new validation run.
+    Create a new validation run and save to database.
     
     Args:
-        project_id: Project identifier
+        project_id: Project identifier (format: "service_name_environment")
         mr_iid: Merge request or validation ID
         source_branch: Source branch name
         target_branch: Target branch name
@@ -104,19 +104,43 @@ def create_validation_run(
         Unique run ID for this validation
         
     Example:
-        >>> create_validation_run("myorg/myrepo", "123", "feature", "gold")
+        >>> create_validation_run("cxp_ptg_adapter_prod", "123", "feature", "gold")
     """
     try:
         # Generate unique run ID
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         run_id = f"run_{timestamp}_{mr_iid}"
         
-        logger.info(f"Created validation run: {run_id}")
+        # Extract service_name from project_id (format: "service_name_environment")
+        # This ensures consistency with execute_worker_pipeline
+        service_name = project_id.rsplit('_', 1)[0] if '_' in project_id else project_id
+        
+        # Extract environment from project_id (if present)
+        environment = project_id.rsplit('_', 1)[1] if '_' in project_id else 'unknown'
+        
+        # Save initial validation run to database with service_name
+        run_data = {
+            'run_id': run_id,
+            'service_name': service_name,
+            'environment': environment,
+            'status': 'running',
+            'created_at': datetime.now().isoformat(),
+            'project_id': project_id,
+            'mr_iid': mr_iid
+        }
+        save_validation_run(run_data)
+        
+        logger.info(f"Created validation run: {run_id} for service: {service_name}/{environment}")
+        logger.info(f"✅ Saved initial validation run to database")
         
         return {
             "success": True,
             "message": f"Created validation run: {run_id}",
-            "data": {"run_id": run_id}
+            "data": {
+                "run_id": run_id,
+                "service_name": service_name,
+                "environment": environment
+            }
         }
         
     except Exception as e:
