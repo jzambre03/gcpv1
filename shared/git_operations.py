@@ -121,8 +121,9 @@ def check_branch_exists(repo_url: str, branch_name: str, gitlab_token: Optional[
         logger.info(f"Checking if branch {branch_name} exists in {repo_url}")
         repo = git.Repo.clone_from(auth_url, temp_dir, depth=1, single_branch=False, no_checkout=True)
         
-        # Fetch remote refs
-        repo.remotes.origin.fetch()
+        # Fetch ALL remote refs (not just main)
+        # The --all flag ensures we get all branches, not just the default
+        repo.remotes.origin.fetch(refspec='refs/heads/*:refs/remotes/origin/*')
         
         # Check if branch exists in remote
         remote_branches = [ref.name for ref in repo.remotes.origin.refs]

@@ -180,7 +180,22 @@ Always err on the side of caution - better to flag than miss a security issue.
             logger.info(f"✅ Combined {len(combined_deltas)} deltas")
             
             if not combined_deltas:
-                logger.warning("No deltas to process")
+                logger.warning("No deltas to process - saving empty policy validation")
+                
+                # Save empty policy validation to database (Certification Engine expects this)
+                empty_result = {
+                    "pii_report": {"instances_found": 0, "types": []},
+                    "intent_report": {"total_findings": 0, "critical_findings": 0},
+                    "policy_summary": {"total_violations": 0, "high": 0, "medium": 0, "low": 0},
+                    "validated_deltas": []
+                }
+                
+                try:
+                    save_policy_validation(run_id, empty_result)
+                    logger.info("✅ Empty policy validation saved to database")
+                except Exception as e:
+                    logger.error(f"Failed to save empty policy validation: {e}")
+                
                 return TaskResponse(
                     task_id=task.task_id,
                     status="success",

@@ -644,7 +644,7 @@ def save_aggregated_results(run_id: str, aggregated_data: Dict[str, Any]) -> Non
             aggregated_data.get('overall_status'),
             aggregated_data.get('files_analyzed', 0),
             aggregated_data.get('total_deltas', 0),
-            aggregated_data.get('policy_violations', 0),
+            aggregated_data.get('policy_violations_count', 0),  # Use count, not list
             aggregated_data.get('confidence_score'),
             aggregated_data.get('final_decision'),
             json.dumps(aggregated_data)

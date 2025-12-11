@@ -33,8 +33,7 @@ from shared.config import Config
 from shared.git_operations import (
     setup_git_auth,
     generate_unique_branch_name,
-    create_config_only_branch,
-    check_branch_exists
+    create_config_only_branch
 )
 
 # Import golden branch tracker
@@ -1116,30 +1115,9 @@ Execute the workflow now.
             
             if existing_golden:
                 logger.info(f"✅ Found existing golden branch in database: {existing_golden}")
+                logger.info(f"✅ Reusing golden branch from database (database is source of truth)")
                 golden_branch = existing_golden
-                
-                # Verify the branch exists in Git (in case it was deleted)
-                if not check_branch_exists(repo_url, golden_branch, os.getenv('GITLAB_TOKEN')):
-                    logger.warning(f"⚠️  Golden branch {golden_branch} not found in Git, creating new one...")
-                    # Create new golden branch
-                    golden_result = await self.create_golden_snapshot(
-                        repo_url=repo_url,
-                        main_branch=main_branch,
-                        environment=environment,
-                        service_id=service_id
-                    )
-                    
-                    if golden_result.get('status') != 'success':
-                        return {
-                            "status": "error",
-                            "error": f"Failed to create golden snapshot: {golden_result.get('error')}",
-                            "timestamp": datetime.now().isoformat()
-                        }
-                    
-                    golden_branch = golden_result['golden_branch']
-                    # Track in database
-                    add_golden_branch(service_id, environment, golden_branch)
-                    logger.info(f"✅ New golden branch created and tracked: {golden_branch}")
+                # No need to check Git - if cloning fails later, we'll handle it then
             else:
                 logger.info(f"ℹ️  No existing golden branch found for {service_id}/{environment}, creating new one...")
                 # Create new golden branch
