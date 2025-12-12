@@ -16,6 +16,10 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 from shared.db import (
     init_db, get_db_connection, get_service_by_id, add_service
 )
@@ -115,9 +119,9 @@ def create_golden_branches_for_service(service_config, config_paths):
     Returns:
         Dict with created branch names
     """
-    gitlab_token = os.getenv("GITLAB_PRIVATE_TOKEN")
+    gitlab_token = os.getenv("GITLAB_TOKEN")
     if not gitlab_token:
-        logger.warning("⚠️  GITLAB_PRIVATE_TOKEN not set, skipping golden branch creation")
+        logger.warning("⚠️  GITLAB_TOKEN not set, skipping golden branch creation")
         return None
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -274,7 +278,7 @@ def main():
     print("   4. NOT modify or delete any existing data")
     print()
     print("⚠️  Requirements:")
-    print("   - GITLAB_PRIVATE_TOKEN environment variable must be set")
+    print("   - GITLAB_TOKEN environment variable must be set")
     print("   - Network access to GitLab")
     print()
     
