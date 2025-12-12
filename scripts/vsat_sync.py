@@ -606,6 +606,32 @@ def sync_vsat_services(
                         updated_count += 1
                     else:
                         unchanged_count += 1
+                    
+                    # Check if service has golden branches - if not, create them
+                    if sync_config.get('create_golden_branches', True):
+                        # Check if any golden branches exist for this service
+                        from shared.db import get_db_connection
+                        has_branches = False
+                        try:
+                            with get_db_connection() as conn:
+                                cursor = conn.cursor()
+                                cursor.execute("""
+                                    SELECT COUNT(*) as count FROM golden_branches 
+                                    WHERE service_name = ? AND branch_type = 'golden'
+                                """, (service_id,))
+                                has_branches = cursor.fetchone()['count'] > 0
+                        except:
+                            pass
+                        
+                        if not has_branches:
+                            logger.info(f"   🌿 Service exists but has no branches, queuing for branch creation: {service_id}")
+                            new_services_for_branches.append({
+                                'service_id': service_id,
+                                'repo_url': repo_url,
+                                'main_branch': main_branch,
+                                'environments': environments,
+                                'config_paths': config_paths
+                            })
                 else:
                     # New service - add to database
                     logger.info(f"   ➕ Adding: {service_id}")
@@ -786,7 +812,7 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
     # Initialize database first
     init_db()
     
-    # Check if database is empty - if so, force sync
+    # Check if database is empty or if VSATs are missing - if so, force sync
     try:
         existing_services = get_all_services()
         db_is_empty = len(existing_services) == 0
@@ -797,8 +823,22 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
         logger.info("📊 Database is empty - forcing full sync")
         force = True
     elif not force and not has_config_changed():
-        logger.info("✅ Config unchanged since last sync - skipping")
-        return {"status": "skipped", "reason": "config_unchanged"}
+        # Config hasn't changed, but check if VSATs in config exist in DB
+        try:
+            config = load_vsat_config()
+            vsats_in_config = {v['name'] for v in config.get('vsats', []) if v.get('enabled', True)}
+            vsats_in_db = {s.get('vsat') for s in existing_services if s.get('vsat')}
+            
+            missing_vsats = vsats_in_config - vsats_in_db
+            if missing_vsats:
+                logger.info(f"📊 VSATs in config but not in DB: {missing_vsats} - forcing sync")
+                force = True
+            else:
+                logger.info("✅ Config unchanged and all VSATs present in DB - skipping")
+                return {"status": "skipped", "reason": "config_unchanged"}
+        except Exception as e:
+            logger.warning(f"⚠️  Could not check VSAT presence: {e} - forcing sync")
+            force = True
     
     try:
         # Load config
