@@ -1,6 +1,6 @@
 # VSAT Configuration - Detailed Settings
 # This file contains all detailed configuration for VSAT automation
-# Modify this file to change default behavior, filters, sync schedules, etc.
+# Most settings have sensible defaults - you can remove sections you don't need
 
 version: "1.0"
 
@@ -27,37 +27,26 @@ defaults:
     - "build.gradle"
     - "requirements.txt"
 
-# VSAT-specific overrides (optional)
-# You can override defaults for specific VSATs here
-vsat_overrides:
-  # Example: Override for a specific VSAT
+# VSAT-specific overrides (optional - remove if not needed)
+vsat_overrides: {}
+  # Example (uncomment to use):
   # saja9l7:
   #   main_branch: master
   #   environments: [prod, dev]
-  #   config_paths: ["*.yml", "*.properties"]
 
 # Sync behavior configuration
 sync:
-  # Weekly sync schedule (cron format: minute hour day-of-week)
+  # Weekly sync schedule (cron: minute hour day-of-week, Sunday=0)
   weekly_schedule: "0 2 0"  # Every Sunday at 2 AM
   
-  # Retry configuration
-  max_retries: 3
-  retry_delay: 60  # seconds
-  retry_backoff: 2  # exponential backoff multiplier
-  
-  # API rate limiting
-  api_delay: 0.5  # seconds between API calls
-  max_concurrent_requests: 10
-  
-  # Branch creation settings
+  # Branch creation
   create_golden_branches: true
   parallel_branch_creation: true
   max_branch_workers: 5
   
-  # Safety thresholds
-  min_services_threshold: 1  # Alert if VSAT has fewer services
-  max_delete_percentage: 50  # Alert if more than 50% services would be deleted
+  # API settings
+  api_delay: 0.5  # seconds between API calls
+  max_concurrent_requests: 10
 
 # Service filtering rules
 filters:
@@ -68,12 +57,7 @@ filters:
     - "test-*"
     - "*-backup"
   
-  # Only include repos matching these patterns (if specified, overrides exclude)
-  # include_patterns:
-  #   - "cxp-*"
-  #   - "*-service"
-  
-  # Require main branch (repos without main branch are skipped)
+  # Only include repos with main branch
   require_main_branch: true
 
 # Notification settings
@@ -84,10 +68,3 @@ notifications:
       level: info
     - type: database
       table: sync_logs
-    # Uncomment to enable external notifications
-    # - type: slack
-    #   webhook_url: ${SLACK_WEBHOOK_URL}
-    # - type: email
-    #   recipients:
-    #     - team@example.com
-

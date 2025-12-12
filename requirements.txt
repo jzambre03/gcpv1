@@ -3,6 +3,7 @@ fastapi==0.109.0
 uvicorn[standard]==0.27.0
 pydantic==2.5.3
 python-dotenv==1.0.0
+jinja2>=3.1.0
 
 # Strands AI Framework
 strands-agents>=1.0.0
@@ -19,6 +20,10 @@ GitPython==3.1.41
 # HTTP & API
 requests==2.31.0
 urllib3>=1.25.4,<2.1
+
+# Scheduling & File Watching (VSAT Automation)
+apscheduler>=3.10.4
+watchdog>=3.0.0
 
 # Data Processing
 PyYAML==6.0.1

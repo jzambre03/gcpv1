@@ -122,16 +122,18 @@ def load_vsat_config() -> Dict[str, Any]:
             })
         }
         
-        # Apply VSAT-specific overrides from detailed config
-        vsat_overrides = detailed_config.get('vsat_overrides', {})
-        for vsat in merged_config['vsats']:
-            vsat_name = vsat['name']
-            if vsat_name in vsat_overrides:
-                override = vsat_overrides[vsat_name]
-                if 'service_config' not in vsat:
-                    vsat['service_config'] = {}
-                vsat['service_config'].update(override)
-                logger.info(f"   Applied overrides for VSAT: {vsat_name}")
+        # Apply VSAT-specific overrides from detailed config (if any)
+        vsat_overrides = detailed_config.get('vsat_overrides') or {}
+        if vsat_overrides and isinstance(vsat_overrides, dict):
+            for vsat in merged_config['vsats']:
+                vsat_name = vsat.get('name')
+                if vsat_name and vsat_name in vsat_overrides:
+                    override = vsat_overrides[vsat_name]
+                    if isinstance(override, dict):
+                        if 'service_config' not in vsat:
+                            vsat['service_config'] = {}
+                        vsat['service_config'].update(override)
+                        logger.info(f"   Applied overrides for VSAT: {vsat_name}")
         
         return merged_config
     
