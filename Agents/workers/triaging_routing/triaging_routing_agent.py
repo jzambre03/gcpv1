@@ -529,7 +529,12 @@ Return LLM output format with:
         
         total_config_files = overview.get("total_files", 0)
         if not total_config_files:
-            total_config_files = overview.get("candidate_files", 0) + len(context_bundle.get("file_changes", {}).get("removed", []))
+            # Fallback: Use max of both branches as approximation for unique files
+            # (usually branches share most files, so max is reasonable estimate)
+            golden_files_count = overview.get("golden_files", 0)
+            candidate_files_count = overview.get("candidate_files", 0)
+            total_config_files = max(golden_files_count, candidate_files_count)
+            logger.warning(f"⚠️  total_files not in overview, using max(golden={golden_files_count}, candidate={candidate_files_count}) = {total_config_files}")
         
         total_drifts = len(all_merged_items)
         

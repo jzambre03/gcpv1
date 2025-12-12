@@ -774,6 +774,11 @@ Execute the analysis now.
             config_golden_files = [f for f in golden_files if is_config_file(f.get("name", f.get("path", "")))]
             config_drift_files = [f for f in drift_files if is_config_file(f.get("name", f.get("path", "")))]
             
+            # Get unique file paths from both branches (union, not addition)
+            golden_file_paths = {f.get("path", f.get("name", "")) for f in config_golden_files}
+            drift_file_paths = {f.get("path", f.get("name", "")) for f in config_drift_files}
+            unique_file_paths = golden_file_paths.union(drift_file_paths)
+            
             overview = {
                 "golden_repo_name": golden_temp.name,
                 "candidate_repo_name": drift_temp.name,
@@ -781,7 +786,7 @@ Execute the analysis now.
                 "candidate_repo_path": str(drift_temp),
                 "golden_files": len(config_golden_files),
                 "candidate_files": len(config_drift_files),
-                "total_files": len(config_golden_files) + len(config_drift_files),
+                "total_files": len(unique_file_paths),  # Unique files across both branches
                 "drifted_files": len([f for f in file_changes.get("modified", []) + file_changes.get("added", []) + file_changes.get("removed", []) if is_config_file(f)]),
                 "ci_present": any("jenkinsfile" in f.get("name", f.get("path", "")).lower() for f in config_drift_files),
                 "build_tools": [f.get("name", f.get("path", "")) for f in config_drift_files if f.get("file_type") == "build"][:10]
