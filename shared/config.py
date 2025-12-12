@@ -4,6 +4,14 @@ import os
 from typing import Optional
 from dataclasses import dataclass
 
+# Configuration file patterns for sparse checkout
+CONFIG_FILE_PATTERNS = [
+    "*.yml", "*.yaml", "*.properties", "*.toml", "*.ini",
+    "*.cfg", "*.conf", "*.config",
+    "Dockerfile", "docker-compose.yml",
+    "pom.xml", "build.gradle", "requirements.txt"
+]
+
 
 @dataclass
 class Config:

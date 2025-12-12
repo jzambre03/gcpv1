@@ -18,6 +18,8 @@ import logging
 import git
 from git.exc import GitCommandError
 
+from .env_filter import filter_files_for_environment, log_environment_distribution
+
 # Configure logging to show in terminal
 logging.basicConfig(
     level=logging.INFO,
@@ -398,6 +400,177 @@ def create_config_only_branch(
         return False
     finally:
         # Cleanup temporary directory
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as e:
+                log_and_print(f"⚠️ Failed to cleanup temp directory: {e}", "warning")
+
+
+def create_env_specific_config_branch(
+    repo_url: str,
+    main_branch: str,
+    new_branch_name: str,
+    environment: str,
+    config_paths: List[str],
+    gitlab_token: Optional[str] = None
+) -> bool:
+    """
+    Create a golden branch containing ONLY environment-specific configuration files.
+    
+    This function filters config files based on environment to prevent cross-environment
+    config leakage:
+    - Prod files (e.g., *prod*) → ONLY in prod branch
+    - Alpha files (e.g., *alpha*) → ONLY in alpha branch
+    - Beta1 files (e.g., *beta1*, *T1.yml) → ONLY in beta1 branch
+    - Beta2 files (e.g., *beta2*, *T2.yml, *T3.yml) → ONLY in beta2 branch
+    - Global files (e.g., pom.xml, Dockerfile) → in ALL branches
+    
+    Args:
+        repo_url: Repository URL
+        main_branch: Source branch name (e.g., "main")
+        new_branch_name: Name for the new golden branch (e.g., "golden_prod_20231215_120000")
+        environment: Target environment ('prod', 'alpha', 'beta1', 'beta2')
+        config_paths: Base config file patterns (e.g., ["*.yml", "*.properties"])
+        gitlab_token: Optional GitLab token for authentication
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    temp_dir = None
+    try:
+        temp_dir = tempfile.mkdtemp(prefix=f"git_{environment}_config_")
+        log_and_print(f"🌿 Creating environment-specific config branch: {new_branch_name}")
+        log_and_print(f"🎯 Environment: {environment}")
+        log_and_print(f"🎯 Source branch: {main_branch}")
+        
+        # Setup authentication
+        auth_url = setup_git_auth(repo_url, gitlab_token)
+        
+        # Initialize empty repo
+        log_and_print(f"Initializing Git repository...")
+        repo = git.Repo.init(temp_dir)
+        
+        # Add remote
+        log_and_print(f"Adding remote origin...")
+        origin = repo.create_remote('origin', auth_url)
+        
+        # Enable sparse checkout
+        log_and_print(f"Configuring sparse-checkout...")
+        with repo.config_writer() as config:
+            config.set_value('core', 'sparseCheckout', 'true')
+            config.set_value('core', 'sparseCheckoutCone', 'false')
+        
+        # Write sparse-checkout patterns (start with base config patterns)
+        sparse_checkout_file = Path(temp_dir) / '.git' / 'info' / 'sparse-checkout'
+        sparse_checkout_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(sparse_checkout_file, 'w') as f:
+            f.write("!.git/\n")
+            for path in config_paths:
+                f.write(f"{path}\n")
+        
+        # Fetch the main branch
+        log_and_print(f"Fetching {main_branch}...")
+        origin.fetch(main_branch, depth=1)
+        
+        # Checkout the main branch
+        log_and_print(f"Checking out {main_branch}...")
+        repo.git.checkout(f'origin/{main_branch}')
+        
+        # Get list of all checked out config files
+        checked_out_files = []
+        for root, dirs, files in os.walk(temp_dir):
+            if '.git' in root:
+                continue
+            for file in files:
+                rel_path = os.path.relpath(os.path.join(root, file), temp_dir)
+                checked_out_files.append(rel_path)
+        
+        log_and_print(f"Found {len(checked_out_files)} config files in {main_branch}")
+        
+        # Log file distribution before filtering
+        log_environment_distribution(checked_out_files)
+        
+        # Filter files for this specific environment
+        log_and_print(f"🔍 Filtering files for environment: {environment}")
+        env_specific_files = filter_files_for_environment(checked_out_files, environment)
+        
+        log_and_print(f"✅ {len(env_specific_files)}/{len(checked_out_files)} files included for {environment}")
+        
+        # Create orphan branch
+        log_and_print(f"Creating orphan branch with {environment}-specific config files...")
+        repo.git.checkout('--orphan', new_branch_name)
+        repo.git.rm('-rf', '--cached', '.')
+        
+        # Build tree with environment-specific files only
+        repo.git.read_tree('--empty')
+        
+        # Get list of all files in the original branch
+        ls_tree_output = repo.git.ls_tree('-r', '--name-only', f'origin/{main_branch}')
+        all_files_in_original = ls_tree_output.strip().split('\n') if ls_tree_output.strip() else []
+        
+        # Filter to config files first (using base patterns)
+        filtered_config_files = []
+        for file_path in all_files_in_original:
+            if file_path.startswith('.git/'):
+                continue
+            for pattern in config_paths:
+                if (fnmatch.fnmatch(file_path, pattern) or 
+                    fnmatch.fnmatch(os.path.basename(file_path), pattern)):
+                    filtered_config_files.append(file_path)
+                    break
+        
+        # Then filter by environment
+        env_filtered_files = filter_files_for_environment(filtered_config_files, environment)
+        
+        # Add each environment-specific file to the index
+        files_actually_added = 0
+        for file_path in env_filtered_files:
+            try:
+                ls_tree_result = repo.git.ls_tree(f'origin/{main_branch}', '--', file_path)
+                if ls_tree_result.strip():
+                    parts = ls_tree_result.strip().split(None, 3)
+                    if len(parts) >= 3:
+                        mode = parts[0]
+                        obj_hash = parts[2]
+                        # Add file to index with its original mode and hash
+                        repo.git.update_index('--add', '--cacheinfo', f'{mode},{obj_hash},{file_path}')
+                        files_actually_added += 1
+            except Exception as e:
+                log_and_print(f"⚠️ Warning: Could not add {file_path}: {e}", "warning")
+        
+        log_and_print(f"Staged {files_actually_added} config files for {environment}")
+        
+        if files_actually_added == 0:
+            log_and_print(f"❌ No files to commit for {environment}", "error")
+            return False
+        
+        # Create commit
+        commit_message = f"Config snapshot for {environment} environment\n\nContains {files_actually_added} environment-specific configuration files"
+        
+        # Configure git user
+        with repo.config_writer() as config:
+            config.set_value('user', 'name', os.getenv('GIT_USER_NAME', 'Golden Config AI'))
+            config.set_value('user', 'email', os.getenv('GIT_USER_EMAIL', 'golden-config@example.com'))
+        
+        repo.index.commit(commit_message)
+        log_and_print(f"Created commit with {files_actually_added} files")
+        
+        # Push to remote
+        log_and_print(f"Pushing branch {new_branch_name} to remote...")
+        origin.push(refspec=f'HEAD:refs/heads/{new_branch_name}')
+        
+        log_and_print(f"✅ Environment-specific config branch {new_branch_name} created with {files_actually_added} files", "info")
+        return True
+        
+    except Exception as e:
+        log_and_print(f"❌ Failed to create environment-specific config branch: {e}", "error")
+        logger.exception("Detailed error:")
+        return False
+    
+    finally:
+        # Cleanup
         if temp_dir and os.path.exists(temp_dir):
             try:
                 shutil.rmtree(temp_dir)

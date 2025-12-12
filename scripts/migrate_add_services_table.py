@@ -19,6 +19,13 @@ sys.path.insert(0, str(project_root))
 from shared.db import (
     init_db, get_db_connection, get_service_by_id, add_service
 )
+from shared.git_operations import (
+    create_config_only_branch,
+    create_env_specific_config_branch
+)
+from shared.golden_branch_tracker import add_golden_branch
+from datetime import datetime
+import os
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -95,6 +102,93 @@ def create_services_table():
         return False
 
 
+def create_golden_branches_for_service(service_config, config_paths):
+    """
+    Create golden branches for a service:
+    1. One complete snapshot with all config files (golden_snapshot_*)
+    2. Four environment-specific branches (golden_prod_*, golden_alpha_*, etc.)
+    
+    Args:
+        service_config: Service configuration dict
+        config_paths: List of config file patterns
+    
+    Returns:
+        Dict with created branch names
+    """
+    gitlab_token = os.getenv("GITLAB_PRIVATE_TOKEN")
+    if not gitlab_token:
+        logger.warning("⚠️  GITLAB_PRIVATE_TOKEN not set, skipping golden branch creation")
+        return None
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    short_hash = datetime.now().strftime("%H%M%S")[:6]
+    
+    created_branches = {}
+    
+    try:
+        # 1. Create complete golden snapshot (all config files)
+        logger.info(f"\n📸 Creating complete golden snapshot for all environments...")
+        snapshot_branch = f"golden_snapshot_{timestamp}_{short_hash}"
+        
+        success = create_config_only_branch(
+            repo_url=service_config["repo_url"],
+            main_branch=service_config["main_branch"],
+            new_branch_name=snapshot_branch,
+            config_paths=config_paths,
+            gitlab_token=gitlab_token
+        )
+        
+        if success:
+            logger.info(f"   ✅ Complete snapshot: {snapshot_branch}")
+            created_branches['snapshot'] = snapshot_branch
+            
+            # Track in database (use 'all' as environment indicator)
+            add_golden_branch(
+                service_name=service_config["service_id"],
+                environment='all',
+                branch_name=snapshot_branch,
+                metadata={'type': 'complete_snapshot', 'contains': 'all_config_files'}
+            )
+        else:
+            logger.warning(f"   ⚠️  Failed to create complete snapshot")
+        
+        # 2. Create environment-specific golden branches
+        logger.info(f"\n📸 Creating environment-specific golden branches...")
+        
+        for env in service_config["environments"]:
+            env_branch = f"golden_{env}_{timestamp}_{short_hash}"
+            
+            logger.info(f"\n   Creating {env} branch...")
+            success = create_env_specific_config_branch(
+                repo_url=service_config["repo_url"],
+                main_branch=service_config["main_branch"],
+                new_branch_name=env_branch,
+                environment=env,
+                config_paths=config_paths,
+                gitlab_token=gitlab_token
+            )
+            
+            if success:
+                logger.info(f"   ✅ {env}: {env_branch}")
+                created_branches[env] = env_branch
+                
+                # Track in database
+                add_golden_branch(
+                    service_name=service_config["service_id"],
+                    environment=env,
+                    branch_name=env_branch,
+                    metadata={'type': 'env_specific', 'filtered_for': env}
+                )
+            else:
+                logger.warning(f"   ⚠️  Failed to create {env} branch")
+        
+        return created_branches
+        
+    except Exception as e:
+        logger.error(f"❌ Error creating golden branches: {e}")
+        return None
+
+
 def add_default_service():
     """Add the default service if it doesn't exist."""
     try:
@@ -122,6 +216,20 @@ def add_default_service():
         logger.info(f"   Service Name: {DEFAULT_SERVICE['service_name']}")
         logger.info(f"   Repo: {DEFAULT_SERVICE['repo_url']}")
         logger.info(f"   Environments: {', '.join(DEFAULT_SERVICE['environments'])}")
+        
+        # Create golden branches for this service
+        logger.info(f"\n🌿 Creating golden branches for service...")
+        branches = create_golden_branches_for_service(DEFAULT_SERVICE, DEFAULT_CONFIG_PATHS)
+        
+        if branches:
+            logger.info(f"\n✅ Golden branches created:")
+            logger.info(f"   📸 Complete snapshot: {branches.get('snapshot', 'N/A')}")
+            for env in DEFAULT_SERVICE["environments"]:
+                if env in branches:
+                    logger.info(f"   🌿 {env}: {branches[env]}")
+        else:
+            logger.warning(f"\n⚠️  Golden branches were not created (check GitLab token)")
+        
         return True
     except Exception as e:
         logger.error(f"❌ Error adding default service: {e}")
@@ -160,7 +268,14 @@ def main():
     print("⚠️  This script will:")
     print("   1. Create the 'services' table with VSAT columns (if it doesn't exist)")
     print("   2. Add default service 'cxp_ptg_adapter' with VSAT values (if it doesn't exist)")
-    print("   3. NOT modify or delete any existing data")
+    print("   3. Create 5 golden branches in GitLab:")
+    print("      - 1 complete snapshot: golden_snapshot_* (all config files)")
+    print("      - 4 environment-specific: golden_prod_*, golden_alpha_*, golden_beta1_*, golden_beta2_*")
+    print("   4. NOT modify or delete any existing data")
+    print()
+    print("⚠️  Requirements:")
+    print("   - GITLAB_PRIVATE_TOKEN environment variable must be set")
+    print("   - Network access to GitLab")
     print()
     
     # Confirm
@@ -212,12 +327,17 @@ def main():
         print("📋 Summary:")
         print("   ✅ Services table created/verified")
         print(f"   ✅ Default service '{DEFAULT_SERVICE['service_id']}' added/verified")
+        print("   ✅ Golden branches created in GitLab:")
+        print("      - Complete snapshot (all config files)")
+        print("      - Environment-specific branches (prod, alpha, beta1, beta2)")
         print("   ✅ No existing data was modified or deleted")
         print()
         print("💡 Next steps:")
-        print("   1. Restart your server: python main.py")
-        print("   2. Services will be loaded from database automatically")
-        print("   3. Add more services via API or CLI:")
+        print("   1. Verify golden branches on GitLab:")
+        print("      https://gitlab.verizon.com/saja9l7/cxp-ptg-adapter/-/branches")
+        print("   2. Restart your server: python main.py")
+        print("   3. Services will be loaded from database automatically")
+        print("   4. Add more services via API or CLI:")
         print("      - API: POST /api/services")
         print("      - CLI: python scripts/manage_services.py add")
         print()
