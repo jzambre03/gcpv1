@@ -143,22 +143,57 @@ Be thorough and conservative - better to require review than allow risky changes
             
             validated_deltas = validated_data.get('validated_deltas', [])
             policy_summary = validated_data.get('policy_summary', {})
-            llm_summary = validated_data.get('llm_summary', {})
             overview = validated_data.get('overview', {})
+            
+            # Step 1.5: Load LLM output separately (we run AFTER Triaging, so it exists)
+            logger.info(f"📥 Loading LLM output from database for run: {run_id}...")
+            llm_summary = {}
+            llm_data = None
+            try:
+                from shared.db import get_latest_llm_output
+                llm_data = get_latest_llm_output(run_id=run_id)
+                if llm_data:
+                    llm_summary = llm_data.get('summary', {})
+                    logger.info(f"✅ LLM output loaded: High={len(llm_data.get('high', []))}, Medium={len(llm_data.get('medium', []))}, Low={len(llm_data.get('low', []))}")
+                else:
+                    logger.warning(f"⚠️ No LLM output found for run: {run_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to load LLM output: {e}")
             
             # Step 2: Extract policy violations and risk level
             logger.info("🔍 Extracting policy violations and risk assessment...")
             policy_violations = self._extract_policy_violations(validated_deltas)
-            risk_level = self._determine_risk_level(llm_summary, validated_deltas)
+            risk_level = self._determine_risk_level(llm_data, llm_summary, validated_deltas)
             evidence = self._extract_evidence(validated_data)
             
-            # Step 3: Calculate confidence score
-            logger.info("📊 Calculating confidence score...")
+            # Step 3: Calculate confidence score with INTELLIGENT LLM BRAIN
+            logger.info("📊 Calculating confidence score with LLM reasoning...")
+            # Get actual risk counts from LLM output
+            high_risk_count = len(llm_data.get('high', [])) if llm_data else 0
+            medium_risk_count = len(llm_data.get('medium', [])) if llm_data else 0
+            low_risk_count = len(llm_data.get('low', [])) if llm_data else 0
+            
+            # Extract intelligent scoring parameters from LLM output and context
+            blast_radius = self._extract_blast_radius(validated_data, llm_data)
+            llm_reasoning = self._extract_llm_reasoning(llm_data, llm_summary)
+            mr_context = self._extract_mr_context(params)
+            
+            logger.info(f"🧠 LLM Brain analysis: Blast radius={blast_radius.get('scope')}, "
+                       f"Safety={llm_reasoning.get('safety_probability', 0.5):.2f}, "
+                       f"Context quality={mr_context.get('description_quality', 'low')}")
+            
             confidence_result = self.confidence_scorer.calculate(
                 policy_violations=policy_violations,
                 risk_level=risk_level,
                 evidence=evidence,
-                environment=environment
+                environment=environment,
+                high_risk_count=high_risk_count,
+                medium_risk_count=medium_risk_count,
+                low_risk_count=low_risk_count,
+                # NEW: Intelligent LLM Brain parameters
+                blast_radius=blast_radius,
+                llm_reasoning=llm_reasoning,
+                mr_context=mr_context
             )
             
             # Step 4: Make certification decision (already included in confidence_result)
@@ -185,7 +220,9 @@ Be thorough and conservative - better to require review than allow risky changes
                 overview=overview,
                 environment=environment,
                 service_id=service_id,
-                snapshot_branch=snapshot_branch
+                snapshot_branch=snapshot_branch,
+                llm_data=llm_data,
+                risk_level=risk_level
             )
             
             # Step 7: Save certification result to database only (no JSON files)
@@ -269,15 +306,28 @@ Be thorough and conservative - better to require review than allow risky changes
         
         return violations
     
-    def _determine_risk_level(self, llm_summary: Dict[str, Any], validated_deltas: list) -> str:
-        """Determine overall risk level from LLM summary and deltas"""
-        # Check LLM summary first
-        risk_level = llm_summary.get('overall_risk', '').lower()
+    def _determine_risk_level(self, llm_data: Optional[Dict[str, Any]], llm_summary: Dict[str, Any], validated_deltas: list) -> str:
+        """Determine overall risk level from LLM output, summary, and deltas"""
+        # Priority 1: Use actual counts from LLM output (most accurate)
+        if llm_data:
+            high_count = len(llm_data.get('high', []))
+            medium_count = len(llm_data.get('medium', []))
+            
+            if high_count > 0:
+                return 'high'
+            elif medium_count > 0:
+                return 'medium'
+            elif len(llm_data.get('low', [])) > 0:
+                return 'low'
+            else:
+                return 'none'
         
+        # Priority 2: Check LLM summary overall_risk field
+        risk_level = llm_summary.get('overall_risk', '').lower()
         if risk_level in ['critical', 'high', 'medium', 'low', 'none']:
             return risk_level
         
-        # Fallback: analyze deltas
+        # Priority 3: Fallback - analyze deltas (less reliable since Guardrails runs before Triaging)
         high_risk_count = sum(1 for d in validated_deltas 
                             if d.get('llm_category') == 'high')
         medium_risk_count = sum(1 for d in validated_deltas 
@@ -304,6 +354,123 @@ Be thorough and conservative - better to require review than allow risky changes
         # - Historical patterns
         
         return None
+    
+    # ============================================================================
+    # INTELLIGENT LLM BRAIN - EXTRACTION METHODS
+    # ============================================================================
+    
+    def _extract_blast_radius(self, validated_data: Dict[str, Any], llm_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Extract blast radius / impact magnitude from drift analysis.
+        
+        Calculates how many files, services, and critical components are affected.
+        """
+        overview = validated_data.get('overview', {})
+        validated_deltas = validated_data.get('validated_deltas', [])
+        
+        # Count affected files
+        files_affected = overview.get('files_with_drift', 0)
+        if files_affected == 0:
+            files_affected = len(set(d.get('file') for d in validated_deltas if d.get('file')))
+        
+        # Count critical files (auth, database, ingress, etc)
+        critical_keywords = ['auth', 'database', 'db', 'ingress', 'gateway', 'secret', 'credential']
+        critical_files = sum(1 for d in validated_deltas 
+                           if any(kw in d.get('file', '').lower() for kw in critical_keywords))
+        
+        # Estimate downstream services (from file paths)
+        unique_services = set()
+        for delta in validated_deltas:
+            file_path = delta.get('file', '')
+            # Extract service name from path (e.g., "services/auth-service/..." → "auth-service")
+            parts = file_path.split('/')
+            if len(parts) > 1:
+                unique_services.add(parts[0])
+        
+        # Determine scope
+        if files_affected >= 5 or critical_files >= 2:
+            scope = 'high'
+        elif files_affected >= 2 or critical_files >= 1:
+            scope = 'medium'
+        else:
+            scope = 'low'
+        
+        return {
+            'files_affected': files_affected,
+            'critical_files': critical_files,
+            'downstream_services': list(unique_services),
+            'scope': scope
+        }
+    
+    def _extract_llm_reasoning(self, llm_data: Optional[Dict[str, Any]], llm_summary: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract LLM reasoning and safety probability from LLM output.
+        
+        Analyzes LLM's contextual understanding of the changes.
+        """
+        if not llm_data:
+            return {
+                'safety_probability': 0.5,  # Neutral
+                'anomaly_score': 0.0,
+                'historical_analysis': {}
+            }
+        
+        # Calculate safety probability based on risk distribution
+        total_items = (len(llm_data.get('high', [])) + 
+                      len(llm_data.get('medium', [])) + 
+                      len(llm_data.get('low', [])) + 
+                      len(llm_data.get('allowed_variance', [])))
+        
+        if total_items == 0:
+            safety_prob = 1.0  # No changes = safe
+        else:
+            # High risk = very unsafe, medium = somewhat unsafe, low/allowed = safe
+            high_count = len(llm_data.get('high', []))
+            medium_count = len(llm_data.get('medium', []))
+            low_count = len(llm_data.get('low', []))
+            allowed_count = len(llm_data.get('allowed_variance', []))
+            
+            # Weighted safety score
+            safety_score = (
+                (high_count * 0.0) +      # High risk = 0% safe
+                (medium_count * 0.3) +    # Medium risk = 30% safe
+                (low_count * 0.7) +       # Low risk = 70% safe
+                (allowed_count * 1.0)     # Allowed = 100% safe
+            ) / total_items
+            
+            safety_prob = safety_score
+        
+        # Calculate anomaly score
+        # Look for anomalies in deltas (unknown service IDs, typos, etc)
+        anomaly_indicators = []
+        for item in llm_data.get('high', []) + llm_data.get('medium', []):
+            why = item.get('why', '').lower()
+            if any(keyword in why for keyword in ['unknown', 'typo', 'mismatch', 'invalid', 'not found']):
+                anomaly_indicators.append(item)
+        
+        anomaly_score = min(len(anomaly_indicators) / max(total_items, 1), 1.0)
+        
+        return {
+            'safety_probability': safety_prob,
+            'anomaly_score': anomaly_score,
+            'historical_analysis': {}  # TODO: Implement historical analysis
+        }
+    
+    def _extract_mr_context(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract MR context and quality indicators.
+        
+        Checks for MR tags, Jira links, rollback plans, etc.
+        """
+        # TODO: Extract from GitLab MR data
+        # For now, return default values
+        return {
+            'has_mr_tags': False,
+            'has_jira_link': False,
+            'has_rollback_plan': False,
+            'has_test_evidence': False,
+            'description_quality': 'low'
+        }
     
     def _create_certified_snapshot(
         self,
@@ -379,7 +546,9 @@ Be thorough and conservative - better to require review than allow risky changes
         overview: Dict[str, Any],
         environment: str,
         service_id: str,
-        snapshot_branch: Optional[str]
+        snapshot_branch: Optional[str],
+        llm_data: Optional[Dict[str, Any]] = None,
+        risk_level: str = "unknown"
     ) -> Dict[str, Any]:
         """Generate comprehensive certification result - flattened for save_certification compatibility"""
         return {
@@ -388,7 +557,7 @@ Be thorough and conservative - better to require review than allow risky changes
             "decision": confidence_result.decision,
             "environment": environment,
             "violations_count": len(policy_violations),
-            "high_risk_count": sum(1 for d in validated_deltas if d.get('llm_category') == 'high'),
+            "high_risk_count": len(llm_data.get('high', [])) if llm_data else sum(1 for d in validated_deltas if d.get('llm_category') == 'high'),
             "certified_snapshot_branch": snapshot_branch,
             
             # Nested metadata for full certification data
@@ -402,18 +571,14 @@ Be thorough and conservative - better to require review than allow risky changes
                 "explanation": confidence_result.explanation,
                 "components": confidence_result.components
             },
-            "summary": {
+                "summary": {
                 "total_deltas": len(validated_deltas),
                 "policy_violations": len(policy_violations),
-                "risk_level": self._determine_risk_level(llm_summary, validated_deltas),
-                "high_risk_deltas": sum(1 for d in validated_deltas 
-                                       if d.get('llm_category') == 'high'),
-                "medium_risk_deltas": sum(1 for d in validated_deltas 
-                                        if d.get('llm_category') == 'medium'),
-                "low_risk_deltas": sum(1 for d in validated_deltas 
-                                      if d.get('llm_category') == 'low'),
-                "allowed_variance_deltas": sum(1 for d in validated_deltas 
-                                             if d.get('llm_category') == 'allowed_variance')
+                "risk_level": risk_level,
+                "high_risk_deltas": len(llm_data.get('high', [])) if llm_data else sum(1 for d in validated_deltas if d.get('llm_category') == 'high'),
+                "medium_risk_deltas": len(llm_data.get('medium', [])) if llm_data else sum(1 for d in validated_deltas if d.get('llm_category') == 'medium'),
+                "low_risk_deltas": len(llm_data.get('low', [])) if llm_data else sum(1 for d in validated_deltas if d.get('llm_category') == 'low'),
+                "allowed_variance_deltas": len(llm_data.get('allowed_variance', [])) if llm_data else sum(1 for d in validated_deltas if d.get('llm_category') == 'allowed_variance')
             },
             "policy_violations": policy_violations,
             "policy_summary": policy_summary,
