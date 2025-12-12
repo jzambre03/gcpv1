@@ -197,36 +197,33 @@ def create_http_session() -> requests.Session:
     return session
 
 
-def fetch_vsat_projects(
-    vsat_name: str,
-    vsat_url: str,
+def fetch_user_projects(
+    username: str,
+    gitlab_base: str,
     gitlab_token: str,
     filters: Dict[str, Any],
     session: requests.Session
 ) -> List[Dict[str, Any]]:
     """
-    Fetch all projects from a VSAT group.
-    Optimized with parallel branch checking.
-    """
-    logger.info(f"📡 Fetching projects from VSAT: {vsat_name}")
+    Fetch projects owned by a user namespace.
+    Used when VSAT is a user namespace instead of a group.
     
-    # Extract group path from URL
-    group_path = vsat_name
-    gitlab_base = vsat_url.replace(f"/{vsat_name}", "")
+    Uses GitLab's user-specific API endpoint for better performance.
+    """
+    logger.info(f"   '{username}' is a user namespace, fetching user projects...")
     
     headers = {"PRIVATE-TOKEN": gitlab_token}
-    
-    # Fetch all projects in group
     all_projects = []
     page = 1
     per_page = 100
     
     while True:
-        url = f"{gitlab_base}/api/v4/groups/{group_path}/projects"
+        # Use user-specific projects API (more efficient than filtering all projects)
+        url = f"{gitlab_base}/api/v4/users/{username}/projects"
         params = {
             "per_page": per_page,
             "page": page,
-            "include_subgroups": True,
+            "owned": True,  # Only projects owned by user
             "archived": False
         }
         
@@ -245,10 +242,87 @@ def fetch_vsat_projects(
             time.sleep(0.5)
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Error fetching projects from {vsat_name}: {e}")
-            raise VSATSyncError(f"Failed to fetch projects from {vsat_name}")
+            logger.error(f"❌ Error fetching user projects for {username}: {e}")
+            raise VSATSyncError(f"Failed to fetch user projects for {username}")
     
-    logger.info(f"   Found {len(all_projects)} total projects")
+    logger.info(f"   Found {len(all_projects)} projects owned by '{username}'")
+    
+    # Apply filters
+    filtered_projects = apply_filters(all_projects, filters)
+    logger.info(f"   After filtering: {len(filtered_projects)} projects")
+    
+    # Check for main branch
+    projects_with_main = check_main_branch_parallel(
+        filtered_projects, gitlab_token, session
+    )
+    
+    logger.info(f"   With main branch: {len(projects_with_main)} projects")
+    
+    return projects_with_main
+
+
+def fetch_vsat_projects(
+    vsat_name: str,
+    vsat_url: str,
+    gitlab_token: str,
+    filters: Dict[str, Any],
+    session: requests.Session
+) -> List[Dict[str, Any]]:
+    """
+    Fetch all projects from a VSAT (supports both groups and user namespaces).
+    Auto-detects whether VSAT is a group or user and uses appropriate API.
+    Optimized with parallel branch checking.
+    """
+    logger.info(f"📡 Fetching projects from VSAT: {vsat_name}")
+    
+    # Extract base URL
+    gitlab_base = vsat_url.replace(f"/{vsat_name}", "")
+    headers = {"PRIVATE-TOKEN": gitlab_token}
+    
+    # Try group API first
+    all_projects = []
+    page = 1
+    per_page = 100
+    
+    while True:
+        url = f"{gitlab_base}/api/v4/groups/{vsat_name}/projects"
+        params = {
+            "per_page": per_page,
+            "page": page,
+            "include_subgroups": True,
+            "archived": False
+        }
+        
+        try:
+            response = session.get(url, headers=headers, params=params, timeout=30)
+            
+            # If first page returns 404, it's not a group - try user namespace
+            if response.status_code == 404 and page == 1:
+                logger.info(f"   Not a group, trying user namespace API...")
+                return fetch_user_projects(vsat_name, gitlab_base, gitlab_token, filters, session)
+            
+            response.raise_for_status()
+            
+            projects = response.json()
+            if not projects:
+                break
+            
+            all_projects.extend(projects)
+            page += 1
+            
+            # Rate limiting
+            time.sleep(0.5)
+            
+        except requests.exceptions.RequestException as e:
+            # If first page failed, propagate error
+            if page == 1:
+                logger.error(f"❌ Error fetching projects from {vsat_name}: {e}")
+                raise VSATSyncError(f"Failed to fetch projects from {vsat_name}")
+            else:
+                # Later pages - just stop pagination
+                break
+    
+    logger.info(f"   Found {len(all_projects)} total projects (group)")
     
     # Apply filters
     filtered_projects = apply_filters(all_projects, filters)
@@ -823,4 +897,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
