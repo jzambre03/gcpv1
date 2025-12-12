@@ -1,0 +1,18 @@
+# VSAT Master Configuration - Simple & Minimal
+# This file defines which VSATs to monitor and sync
+# Keep it simple - only essential VSAT information here
+# Detailed configuration is in vsat_config.yaml
+
+version: "1.0"
+
+# VSATs to monitor and sync
+# Format: name, url, enabled (that's it!)
+vsats:
+  - name: saja9l7
+    url: https://gitlab.verizon.com/saja9l7
+    enabled: true
+
+  # Add more VSATs here:
+  # - name: another_team
+  #   url: https://gitlab.verizon.com/another_team
+  #   enabled: true

@@ -383,7 +383,7 @@ def create_config_only_branch(
         
         # Create commit with only config files
         log_and_print(f"Creating commit and pushing to remote...")
-        commit_message = f"Config-only snapshot from {main_branch}\n\nContains only configuration files ({files_actually_added} files):\n- YAML configs\n- Properties files\n- Build configs\n- Container configs"
+        commit_message = f"Merge branch '{new_branch_name}'\n\nConfig-only snapshot from {main_branch}\n\nContains only configuration files ({files_actually_added} files):\n- YAML configs\n- Properties files\n- Build configs\n- Container configs"
         repo.git.commit('-m', commit_message)
         
         # Push the new branch to remote
@@ -547,7 +547,7 @@ def create_env_specific_config_branch(
             return False
         
         # Create commit
-        commit_message = f"Config snapshot for {environment} environment\n\nContains {files_actually_added} environment-specific configuration files"
+        commit_message = f"Merge branch '{new_branch_name}'\n\nConfig snapshot for {environment} environment\n\nContains {files_actually_added} environment-specific configuration files"
         
         # Configure git user
         with repo.config_writer() as config:
@@ -672,6 +672,7 @@ def create_selective_golden_branch(
         
         # Create commit
         commit_message = (
+            f"Merge branch '{new_branch_name}'\n\n"
             f"Selective certification: {new_branch_name}\n\n"
             f"Base: {old_golden_branch}\n"
             f"Accepted {files_copied} files from drift branch {drift_branch}\n"

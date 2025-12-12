@@ -41,6 +41,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 # Import database functions
 from shared.db import (
@@ -1793,6 +1797,129 @@ def main():
         port=port,
         log_level="info"
     )
+
+
+# ============================================================================
+# VSAT Automation Integration
+# ============================================================================
+
+# Global instances
+scheduler = None
+config_observer = None
+
+
+class VSATConfigFileHandler(FileSystemEventHandler):
+    """Handle VSAT config file changes"""
+    
+    def __init__(self):
+        self.last_sync = datetime.now()
+        self.debounce_seconds = 5
+    
+    def on_modified(self, event):
+        # Watch for both master and detailed config files
+        if event.src_path.endswith('vsat_master.yaml') or event.src_path.endswith('vsat_config.yaml'):
+            now = datetime.now()
+            if (now - self.last_sync).total_seconds() > self.debounce_seconds:
+                logger.info("📝 VSAT config changed - triggering sync")
+                self.last_sync = now
+                try:
+                    from scripts.vsat_sync import run_sync
+                    run_sync(force=True)
+                except Exception as e:
+                    logger.error(f"❌ VSAT sync failed: {e}")
+
+
+def scheduled_vsat_sync():
+    """Scheduled VSAT sync"""
+    logger.info("⏰ Scheduled VSAT sync triggered")
+    try:
+        from scripts.vsat_sync import run_sync
+        run_sync(force=True)
+    except Exception as e:
+        logger.error(f"❌ VSAT sync failed: {e}")
+
+
+def start_vsat_automation():
+    """Start VSAT scheduler and file watcher"""
+    global scheduler, config_observer
+    
+    vsat_config = Path(__file__).parent / "config" / "vsat_master.yaml"
+    
+    if not vsat_config.exists():
+        logger.info("ℹ️  VSAT config not found - automation disabled")
+        logger.info(f"   Create {vsat_config} to enable auto-discovery")
+        return
+    
+    try:
+        logger.info("="*80)
+        logger.info("🚀 VSAT Automation Starting")
+        logger.info("="*80)
+        
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(
+            scheduled_vsat_sync,
+            CronTrigger(day_of_week='sun', hour=2, minute=0),
+            id='weekly_vsat_sync',
+            replace_existing=True
+        )
+        scheduler.start()
+        logger.info("✅ Scheduler: Weekly sync (Sunday 2 AM)")
+        
+        config_observer = Observer()
+        config_observer.schedule(
+            VSATConfigFileHandler(),
+            str(vsat_config.parent),
+            recursive=False
+        )
+        config_observer.start()
+        logger.info("✅ File watcher: Monitoring config files (vsat_master.yaml, vsat_config.yaml)")
+        
+        # Initial sync
+        logger.info("🔄 Running initial VSAT sync...")
+        try:
+            from scripts.vsat_sync import run_sync
+            result = run_sync(force=False)
+            if result.get('status') == 'success':
+                logger.info(f"✅ Initial sync: +{result.get('added', 0)} added, ~{result.get('updated', 0)} updated")
+            elif result.get('status') == 'skipped':
+                logger.info("✅ Config unchanged - sync skipped")
+        except Exception as e:
+            logger.warning(f"⚠️  Initial sync failed: {e}")
+        
+        logger.info("="*80)
+            
+    except Exception as e:
+        logger.error(f"❌ VSAT automation failed: {e}")
+
+
+def stop_vsat_automation():
+    """Stop VSAT automation"""
+    global scheduler, config_observer
+    if scheduler:
+        try:
+            scheduler.shutdown()
+            logger.info("✅ VSAT Scheduler stopped")
+        except:
+            pass
+    if config_observer:
+        try:
+            config_observer.stop()
+            config_observer.join(timeout=5)
+            logger.info("✅ VSAT File watcher stopped")
+        except:
+            pass
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Start VSAT automation on server startup"""
+    start_vsat_automation()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop VSAT automation on server shutdown"""
+    stop_vsat_automation()
 
 
 if __name__ == "__main__":

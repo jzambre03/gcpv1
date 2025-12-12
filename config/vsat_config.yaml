@@ -1,0 +1,93 @@
+# VSAT Configuration - Detailed Settings
+# This file contains all detailed configuration for VSAT automation
+# Modify this file to change default behavior, filters, sync schedules, etc.
+
+version: "1.0"
+
+# Default service configuration (applied to all VSATs unless overridden)
+defaults:
+  main_branch: main
+  environments:
+    - prod
+    - alpha
+    - beta1
+    - beta2
+  config_paths:
+    - "*.yml"
+    - "*.yaml"
+    - "*.properties"
+    - "*.toml"
+    - "*.ini"
+    - "*.cfg"
+    - "*.conf"
+    - "*.config"
+    - "Dockerfile"
+    - "docker-compose.yml"
+    - "pom.xml"
+    - "build.gradle"
+    - "requirements.txt"
+
+# VSAT-specific overrides (optional)
+# You can override defaults for specific VSATs here
+vsat_overrides:
+  # Example: Override for a specific VSAT
+  # saja9l7:
+  #   main_branch: master
+  #   environments: [prod, dev]
+  #   config_paths: ["*.yml", "*.properties"]
+
+# Sync behavior configuration
+sync:
+  # Weekly sync schedule (cron format: minute hour day-of-week)
+  weekly_schedule: "0 2 0"  # Every Sunday at 2 AM
+  
+  # Retry configuration
+  max_retries: 3
+  retry_delay: 60  # seconds
+  retry_backoff: 2  # exponential backoff multiplier
+  
+  # API rate limiting
+  api_delay: 0.5  # seconds between API calls
+  max_concurrent_requests: 10
+  
+  # Branch creation settings
+  create_golden_branches: true
+  parallel_branch_creation: true
+  max_branch_workers: 5
+  
+  # Safety thresholds
+  min_services_threshold: 1  # Alert if VSAT has fewer services
+  max_delete_percentage: 50  # Alert if more than 50% services would be deleted
+
+# Service filtering rules
+filters:
+  # Exclude repos matching these patterns
+  exclude_patterns:
+    - "*-archived"
+    - "*-deprecated"
+    - "test-*"
+    - "*-backup"
+  
+  # Only include repos matching these patterns (if specified, overrides exclude)
+  # include_patterns:
+  #   - "cxp-*"
+  #   - "*-service"
+  
+  # Require main branch (repos without main branch are skipped)
+  require_main_branch: true
+
+# Notification settings
+notifications:
+  enabled: true
+  channels:
+    - type: log
+      level: info
+    - type: database
+      table: sync_logs
+    # Uncomment to enable external notifications
+    # - type: slack
+    #   webhook_url: ${SLACK_WEBHOOK_URL}
+    # - type: email
+    #   recipients:
+    #     - team@example.com
+
