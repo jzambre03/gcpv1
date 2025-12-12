@@ -199,12 +199,34 @@ def init_db():
             )
         """)
         
+        # Table 10: Services Configuration (NEW)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS services (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_id TEXT UNIQUE NOT NULL,
+                service_name TEXT NOT NULL,
+                repo_url TEXT NOT NULL,
+                main_branch TEXT NOT NULL DEFAULT 'main',
+                environments JSON NOT NULL,
+                config_paths JSON,
+                vsat TEXT DEFAULT 'saja9l7',
+                vsat_url TEXT DEFAULT 'https://gitlab.verizon.com/saja9l7',
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                description TEXT,
+                metadata JSON
+            )
+        """)
+        
         # Create indexes for better query performance
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_runs_service_env ON validation_runs(service_name, environment)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_runs_created ON validation_runs(created_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_deltas_run ON config_deltas(run_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_deltas_risk ON config_deltas(risk_level)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_branches_active ON golden_branches(is_active)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_active ON services(is_active)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_id ON services(service_id)")
         
         conn.commit()
         logger.info(f"✅ Database initialized at {DB_PATH}")
@@ -835,4 +857,219 @@ def get_aggregated_results(run_id: str) -> Optional[Dict[str, Any]]:
         """, (run_id,))
         row = cursor.fetchone()
         return json.loads(row['aggregated_data']) if row else None
+
+
+# ============================================================================
+# Services Configuration (NEW)
+# ============================================================================
+
+def _extract_vsat_from_url(repo_url: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Extract VSAT and VSAT URL from repository URL.
+    
+    Examples:
+        "https://gitlab.verizon.com/saja9l7/cxp-ptg-adapter.git"
+        -> vsat="saja9l7", vsat_url="https://gitlab.verizon.com/saja9l7"
+        
+        "https://gitlab.verizon.com/another_team/repo.git"
+        -> vsat="another_team", vsat_url="https://gitlab.verizon.com/another_team"
+        
+        "https://github.com/org/repo.git"
+        -> vsat=None, vsat_url=None
+    
+    Args:
+        repo_url: Git repository URL
+        
+    Returns:
+        Tuple of (vsat, vsat_url) or (None, None) if cannot be extracted
+    """
+    import re
+    
+    # Pattern to match GitLab URLs: https://gitlab.verizon.com/VSAT/repo.git
+    pattern = r'https?://([^/]+)/([^/]+)/[^/]+\.git'
+    match = re.match(pattern, repo_url)
+    
+    if match:
+        base_domain = match.group(1)  # e.g., gitlab.verizon.com
+        vsat = match.group(2)          # e.g., saja9l7 or another_team
+        vsat_url = f"https://{base_domain}/{vsat}"
+        return vsat, vsat_url
+    
+    return None, None
+
+
+def add_service(
+    service_id: str,
+    service_name: str,
+    repo_url: str,
+    main_branch: str,
+    environments: List[str],
+    config_paths: Optional[List[str]] = None,
+    vsat: Optional[str] = None,
+    vsat_url: Optional[str] = None,
+    description: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    """
+    Add a new service to the database.
+    
+    Args:
+        service_id: Unique service identifier (e.g., "cxp_ptg_adapter")
+        service_name: Human-readable service name
+        repo_url: Git repository URL
+        main_branch: Main branch name (default: "main")
+        environments: List of environments (e.g., ["prod", "alpha", "beta1"])
+        config_paths: List of config file patterns
+        vsat: VSAT group identifier (auto-extracted from repo_url if not provided)
+        vsat_url: VSAT group URL (auto-extracted from repo_url if not provided)
+        description: Service description
+        metadata: Additional metadata
+    """
+    # Auto-extract VSAT from repo_url if not provided
+    if vsat is None or vsat_url is None:
+        extracted_vsat, extracted_vsat_url = _extract_vsat_from_url(repo_url)
+        if vsat is None:
+            vsat = extracted_vsat
+        if vsat_url is None:
+            vsat_url = extracted_vsat_url
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO services (
+                service_id, service_name, repo_url, main_branch,
+                environments, config_paths, vsat, vsat_url, description, metadata, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (
+            service_id,
+            service_name,
+            repo_url,
+            main_branch,
+            json.dumps(environments),
+            json.dumps(config_paths) if config_paths else None,
+            vsat,
+            vsat_url,
+            description,
+            json.dumps(metadata) if metadata else None
+        ))
+        logger.info(f"✅ Added/updated service: {service_id} (VSAT: {vsat})")
+
+
+def get_all_services(active_only: bool = True) -> List[Dict[str, Any]]:
+    """
+    Get all services from database.
+    
+    Args:
+        active_only: If True, only return active services
+        
+    Returns:
+        List of service dictionaries
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        if active_only:
+            cursor.execute("""
+                SELECT * FROM services WHERE is_active = 1 ORDER BY service_id
+            """)
+        else:
+            cursor.execute("SELECT * FROM services ORDER BY service_id")
+        
+        rows = cursor.fetchall()
+        services = []
+        for row in rows:
+            service = dict(row)
+            # Parse JSON fields
+            service['environments'] = json.loads(service['environments'])
+            if service['config_paths']:
+                service['config_paths'] = json.loads(service['config_paths'])
+            if service['metadata']:
+                service['metadata'] = json.loads(service['metadata'])
+            services.append(service)
+        
+        return services
+
+
+def get_service_by_id(service_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get service configuration by service_id.
+    
+    Args:
+        service_id: Service identifier
+        
+    Returns:
+        Service dict or None
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM services WHERE service_id = ?", (service_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            return None
+        
+        service = dict(row)
+        # Parse JSON fields
+        service['environments'] = json.loads(service['environments'])
+        if service['config_paths']:
+            service['config_paths'] = json.loads(service['config_paths'])
+        if service['metadata']:
+            service['metadata'] = json.loads(service['metadata'])
+        
+        return service
+
+
+def update_service(service_id: str, updates: Dict[str, Any]) -> None:
+    """
+    Update specific fields of a service.
+    
+    Args:
+        service_id: Service identifier
+        updates: Dict of fields to update
+    """
+    # Handle JSON fields
+    if 'environments' in updates and isinstance(updates['environments'], list):
+        updates['environments'] = json.dumps(updates['environments'])
+    if 'config_paths' in updates and isinstance(updates['config_paths'], list):
+        updates['config_paths'] = json.dumps(updates['config_paths'])
+    if 'metadata' in updates and isinstance(updates['metadata'], dict):
+        updates['metadata'] = json.dumps(updates['metadata'])
+    
+    updates['updated_at'] = datetime.now().isoformat()
+    
+    set_clauses = []
+    values = []
+    for key, value in updates.items():
+        set_clauses.append(f"{key} = ?")
+        values.append(value)
+    
+    values.append(service_id)
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            UPDATE services 
+            SET {', '.join(set_clauses)}
+            WHERE service_id = ?
+        """, values)
+        logger.info(f"✅ Updated service: {service_id}")
+
+
+def deactivate_service(service_id: str) -> None:
+    """Mark service as inactive (soft delete)."""
+    update_service(service_id, {'is_active': 0})
+    logger.info(f"⚠️ Deactivated service: {service_id}")
+
+
+def activate_service(service_id: str) -> None:
+    """Mark service as active."""
+    update_service(service_id, {'is_active': 1})
+    logger.info(f"✅ Activated service: {service_id}")
+
+
+def delete_service(service_id: str) -> None:
+    """Permanently delete service from database (use with caution)."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM services WHERE service_id = ?", (service_id,))
+        logger.warning(f"🗑️ Permanently deleted service: {service_id}")
 

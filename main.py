@@ -46,7 +46,9 @@ from pydantic import BaseModel, Field, field_validator
 from shared.db import (
     get_run_by_id, get_all_validation_runs,
     get_context_bundle, get_llm_output, get_policy_validation,
-    get_certification, get_report, get_aggregated_results
+    get_certification, get_report, get_aggregated_results,
+    # NEW: Services configuration
+    get_all_services, get_service_by_id, add_service, init_db
 )
 
 # Strands agent system imports
@@ -104,42 +106,70 @@ DEFAULT_CONFIG_PATHS = [
     "go.mod",                  # Go module file
 ]
 
-# Service Configuration
-SERVICES_CONFIG = {
-    # Active Service - CXP PTG Adapter (matches existing database data)
-    "cxp_ptg_adapter": {
-        "name": "CXP PTG Adapter",
-        "repo_url": "https://gitlab.verizon.com/saja9l7/cxp-ptg-adapter.git",
-        "main_branch": "main",
-        "environments": ["prod", "alpha", "beta1", "beta2"],
-        "config_paths": DEFAULT_CONFIG_PATHS  # Can be customized per service
-    },
-    
-    # Commented out - Uncomment to enable
-    # "cxp_ordering_services": {
-    #     "name": "CXP Ordering Services",
-    #     "repo_url": "https://gitlab.verizon.com/saja9l7/cxp-ordering-services.git",
-    #     "main_branch": "main",
-    #     "environments": ["prod", "dev", "qa", "staging"],
-    #     "config_paths": DEFAULT_CONFIG_PATHS
-    # },
-    # "cxp_credit_services": {
-    #     "name": "CXP Credit Services",
-    #     "repo_url": "https://gitlab.verizon.com/saja9l7/cxp-credit-services.git",
-    #     "main_branch": "main",
-    #     "environments": ["prod", "dev", "qa", "staging"],
-    #     "config_paths": DEFAULT_CONFIG_PATHS
-    # },
-    # "cxp_config_properties": {
-    #     "name": "CXP Config Properties",
-    #     "repo_url": "https://gitlab.verizon.com/saja9l7/cxp-config-properties.git",
-    #     "main_branch": "main",
-    #     "environments": ["prod", "dev", "qa", "staging"],
-    #     "config_paths": DEFAULT_CONFIG_PATHS
-    # }
-}
+# ============================================================================
+# SERVICE CONFIGURATION - Load from Database
+# ============================================================================
 
-print(f"🏢 Services Configured:")
+def load_services_from_db() -> Dict[str, Any]:
+    """Load services configuration from database."""
+    try:
+        services_list = get_all_services(active_only=True)
+        services_dict = {}
+        
+        for service in services_list:
+            service_id = service['service_id']
+            services_dict[service_id] = {
+                "name": service['service_name'],
+                "repo_url": service['repo_url'],
+                "main_branch": service['main_branch'],
+                "environments": service['environments'],
+                "config_paths": service['config_paths'] or DEFAULT_CONFIG_PATHS,
+                "description": service.get('description'),
+                "metadata": service.get('metadata', {})
+            }
+        
+        return services_dict
+    except Exception as e:
+        logger.warning(f"⚠️ Could not load services from database: {e}")
+        logger.warning("⚠️ Using empty services config. Please add services to database.")
+        return {}
+
+
+def initialize_default_services():
+    """
+    Initialize database with default service if no services exist.
+    This runs once on startup to seed the database.
+    """
+    try:
+        # Check if any services exist
+        existing_services = get_all_services(active_only=False)
+        
+        if not existing_services:
+            logger.info("📦 No services in database, adding default service...")
+            
+            # Add default service - CXP PTG Adapter
+            add_service(
+                service_id="cxp_ptg_adapter",
+                service_name="CXP PTG Adapter",
+                repo_url="https://gitlab.verizon.com/saja9l7/cxp-ptg-adapter.git",
+                main_branch="main",
+                environments=["prod", "alpha", "beta1", "beta2"],
+                config_paths=DEFAULT_CONFIG_PATHS,
+                description="CXP Payment Gateway Adapter Service"
+            )
+            
+            logger.info("✅ Default service added to database")
+            logger.info("💡 To add more services, use the /api/services endpoint or database functions")
+    except Exception as e:
+        logger.error(f"❌ Error initializing default services: {e}")
+
+
+# Initialize database and load services
+init_db()
+initialize_default_services()
+SERVICES_CONFIG = load_services_from_db()
+
+print(f"🏢 Services Loaded from Database:")
 for service_id, config in SERVICES_CONFIG.items():
     print(f"   {service_id}: {config['name']}")
     print(f"      Repo: {config['repo_url']}")
@@ -604,7 +634,11 @@ async def get_llm_output_endpoint():
 
 @app.get("/api/services")
 async def get_services():
-    """Get configured services with their status"""
+    """Get configured services with their status (loaded from database)"""
+    # Reload services from database to get latest changes
+    global SERVICES_CONFIG
+    SERVICES_CONFIG = load_services_from_db()
+    
     services = []
     
     for service_id, config in SERVICES_CONFIG.items():
@@ -1550,6 +1584,139 @@ async def health_check():
         "has_results": latest_results is not None
     }
 
+
+# ============================================================================
+# SERVICE MANAGEMENT API ENDPOINTS (NEW)
+# ============================================================================
+
+@app.post("/api/services")
+async def create_service(request: Request):
+    """
+    Add a new service to the database.
+    
+    Body:
+    {
+        "service_id": "my_service",
+        "service_name": "My Service",
+        "repo_url": "https://gitlab.example.com/org/repo.git",
+        "main_branch": "main",
+        "environments": ["prod", "dev"],
+        "config_paths": [...],  // optional
+        "description": "..."     // optional
+    }
+    """
+    try:
+        data = await request.json()
+        
+        # Validate required fields
+        required_fields = ["service_id", "service_name", "repo_url", "main_branch", "environments"]
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+        
+        # Add service to database
+        # VSAT will be auto-extracted from repo_url if not provided
+        add_service(
+            service_id=data["service_id"],
+            service_name=data["service_name"],
+            repo_url=data["repo_url"],
+            main_branch=data["main_branch"],
+            environments=data["environments"],
+            config_paths=data.get("config_paths"),
+            vsat=data.get("vsat"),  # Optional - will be auto-extracted
+            vsat_url=data.get("vsat_url"),  # Optional - will be auto-extracted
+            description=data.get("description")
+        )
+        
+        # Reload services
+        global SERVICES_CONFIG
+        SERVICES_CONFIG = load_services_from_db()
+        
+        return {
+            "status": "success",
+            "message": f"Service '{data['service_id']}' added successfully",
+            "service": data
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add service: {str(e)}")
+
+
+@app.put("/api/services/{service_id}")
+async def update_service_endpoint(service_id: str, request: Request):
+    """Update an existing service."""
+    try:
+        from shared.db import update_service
+        
+        service = get_service_by_id(service_id)
+        if not service:
+            raise HTTPException(status_code=404, detail=f"Service '{service_id}' not found")
+        
+        data = await request.json()
+        update_service(service_id, data)
+        
+        # Reload services
+        global SERVICES_CONFIG
+        SERVICES_CONFIG = load_services_from_db()
+        
+        return {
+            "status": "success",
+            "message": f"Service '{service_id}' updated successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update service: {str(e)}")
+
+
+@app.delete("/api/services/{service_id}")
+async def delete_service_endpoint(service_id: str):
+    """Deactivate a service (soft delete)."""
+    try:
+        from shared.db import deactivate_service
+        
+        service = get_service_by_id(service_id)
+        if not service:
+            raise HTTPException(status_code=404, detail=f"Service '{service_id}' not found")
+        
+        deactivate_service(service_id)
+        
+        # Reload services
+        global SERVICES_CONFIG
+        SERVICES_CONFIG = load_services_from_db()
+        
+        return {
+            "status": "success",
+            "message": f"Service '{service_id}' deactivated successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to deactivate service: {str(e)}")
+
+
+@app.get("/api/services/{service_id}/config")
+async def get_service_config(service_id: str):
+    """Get detailed configuration for a specific service."""
+    try:
+        service = get_service_by_id(service_id)
+        if not service:
+            raise HTTPException(status_code=404, detail=f"Service '{service_id}' not found")
+        
+        return {
+            "status": "success",
+            "service": service
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get service config: {str(e)}")
+
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 def main():
     """Start the multi-agent validation server"""
