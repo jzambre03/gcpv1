@@ -84,6 +84,25 @@ def load_vsat_config() -> Dict[str, Any]:
         if 'vsats' not in master_config:
             raise VSATSyncError("Master config file missing 'vsats' section")
         
+        # Check for duplicate VSAT names
+        vsat_names = []
+        duplicates = []
+        for vsat in master_config['vsats']:
+            vsat_name = vsat.get('name')
+            if not vsat_name:
+                raise VSATSyncError("VSAT entry missing 'name' field")
+            
+            if vsat_name in vsat_names:
+                duplicates.append(vsat_name)
+            else:
+                vsat_names.append(vsat_name)
+        
+        if duplicates:
+            raise VSATSyncError(
+                f"Duplicate VSAT IDs found in config: {', '.join(set(duplicates))}. "
+                f"Each VSAT must have a unique name."
+            )
+        
         logger.info(f"✅ Loaded master config: {len(master_config['vsats'])} VSATs")
         
         # Load detailed config (defaults, sync settings, filters, etc.)
@@ -834,10 +853,32 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
                 logger.info(f"📊 VSATs in config but not in DB: {missing_vsats} - forcing sync")
                 force = True
             else:
-                logger.info("✅ Config unchanged and all VSATs present in DB - skipping")
-                return {"status": "skipped", "reason": "config_unchanged"}
+                # Check if any existing services are missing golden branches
+                services_without_branches = []
+                for service in existing_services:
+                    service_id = service.get('service_id')
+                    try:
+                        with get_db_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("""
+                                SELECT COUNT(*) as count FROM golden_branches 
+                                WHERE service_name = ? AND branch_type = 'golden' AND is_active = 1
+                            """, (service_id,))
+                            has_branches = cursor.fetchone()['count'] > 0
+                            if not has_branches:
+                                services_without_branches.append(service_id)
+                    except:
+                        pass
+                
+                if services_without_branches:
+                    logger.info(f"�� Found {len(services_without_branches)} services without golden branches - forcing sync")
+                    logger.info(f"   Services needing branches: {', '.join(services_without_branches[:5])}{'...' if len(services_without_branches) > 5 else ''}")
+                    force = True
+                else:
+                    logger.info("✅ Config unchanged, all VSATs present, and all services have golden branches - skipping")
+                    return {"status": "skipped", "reason": "config_unchanged_and_branches_exist"}
         except Exception as e:
-            logger.warning(f"⚠️  Could not check VSAT presence: {e} - forcing sync")
+            logger.warning(f"⚠️  Could not check VSAT/branch presence: {e} - forcing sync")
             force = True
     
     try:
