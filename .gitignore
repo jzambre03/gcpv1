@@ -161,3 +161,6 @@ logs/
 # Old agents folder
 Agents_old/
 test.txt
+
+# VSAT Sync Logs
+logs/vsat_sync/

@@ -19,6 +19,7 @@ import sys
 import yaml
 import hashlib
 import time
+import json
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set, Tuple, Any
@@ -58,11 +59,176 @@ logger = logging.getLogger(__name__)
 MASTER_CONFIG_FILE = project_root / "config" / "vsat_master.yaml"
 DETAILED_CONFIG_FILE = project_root / "config" / "vsat_config.yaml"
 CONFIG_HASH_FILE = project_root / "config" / ".vsat_master_hash"
+LOGS_DIR = project_root / "logs" / "vsat_sync"
 
 
 class VSATSyncError(Exception):
     """Custom exception for VSAT sync errors"""
     pass
+
+
+class VSATSyncLogger:
+    """
+    Logger for VSAT sync operations.
+    Creates a timestamped folder for each sync with logs and metadata.
+    """
+    
+    def __init__(self, vsat_name: str, is_new_vsat: bool = False):
+        """
+        Initialize logger for a VSAT sync.
+        
+        Args:
+            vsat_name: Name of the VSAT being synced
+            is_new_vsat: True if this is a newly added VSAT
+        """
+        self.vsat_name = vsat_name
+        self.is_new_vsat = is_new_vsat
+        self.start_time = datetime.now()
+        self.timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
+        
+        # Create VSAT-specific directory
+        self.log_dir = LOGS_DIR / f"{vsat_name}_{self.timestamp}"
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # File paths
+        self.log_file = self.log_dir / "sync.log"
+        self.metadata_file = self.log_dir / "metadata.json"
+        
+        # Metadata storage
+        self.metadata = {
+            "vsat_name": vsat_name,
+            "is_new_vsat": is_new_vsat,
+            "sync_start": self.start_time.isoformat(),
+            "sync_end": None,
+            "duration_seconds": None,
+            "services": {
+                "added": [],
+                "updated": [],
+                "unchanged": [],
+                "total": 0
+            },
+            "golden_branches": {
+                "total_created": 0,
+                "by_service": {}
+            },
+            "errors": [],
+            "status": "in_progress"
+        }
+        
+        # Write initial log
+        self._write_log(f"{'='*80}")
+        self._write_log(f"VSAT SYNC LOG - {vsat_name}")
+        self._write_log(f"{'='*80}")
+        self._write_log(f"Start Time: {self.start_time}")
+        self._write_log(f"New VSAT: {is_new_vsat}")
+        self._write_log(f"Log Directory: {self.log_dir}")
+        self._write_log(f"{'='*80}\n")
+    
+    def _write_log(self, message: str):
+        """Write message to log file"""
+        with open(self.log_file, 'a', encoding='utf-8') as f:
+            f.write(f"{message}\n")
+    
+    def log(self, message: str):
+        """Log a message (both to file and console)"""
+        self._write_log(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+        logger.info(message)
+    
+    def add_service(self, service_id: str, service_name: str, repo_url: str, status: str):
+        """
+        Record a service addition/update.
+        
+        Args:
+            service_id: Service identifier
+            service_name: Human-readable service name
+            repo_url: Repository URL
+            status: 'added', 'updated', or 'unchanged'
+        """
+        service_data = {
+            "service_id": service_id,
+            "service_name": service_name,
+            "repo_url": repo_url,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        if status == 'added':
+            self.metadata['services']['added'].append(service_data)
+            self._write_log(f"  ➕ ADDED: {service_id} - {service_name}")
+        elif status == 'updated':
+            self.metadata['services']['updated'].append(service_data)
+            self._write_log(f"  📝 UPDATED: {service_id} - {service_name}")
+        elif status == 'unchanged':
+            self.metadata['services']['unchanged'].append(service_data)
+    
+    def add_golden_branches(self, service_id: str, branches: Dict[str, str]):
+        """
+        Record golden branches created for a service.
+        
+        Args:
+            service_id: Service identifier
+            branches: Dict of environment -> branch_name
+        """
+        if service_id not in self.metadata['golden_branches']['by_service']:
+            self.metadata['golden_branches']['by_service'][service_id] = {
+                "branches": {},
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        for env, branch_name in branches.items():
+            self.metadata['golden_branches']['by_service'][service_id]['branches'][env] = branch_name
+            self.metadata['golden_branches']['total_created'] += 1
+            self._write_log(f"    🌿 Branch created: {env} -> {branch_name}")
+    
+    def add_error(self, error_message: str):
+        """Record an error"""
+        error_data = {
+            "message": error_message,
+            "timestamp": datetime.now().isoformat()
+        }
+        self.metadata['errors'].append(error_data)
+        self._write_log(f"  ❌ ERROR: {error_message}")
+    
+    def finalize(self, status: str = "success"):
+        """
+        Finalize the log and save metadata.
+        
+        Args:
+            status: 'success', 'failed', or 'partial'
+        """
+        end_time = datetime.now()
+        duration = (end_time - self.start_time).total_seconds()
+        
+        self.metadata['sync_end'] = end_time.isoformat()
+        self.metadata['duration_seconds'] = duration
+        self.metadata['status'] = status
+        self.metadata['services']['total'] = (
+            len(self.metadata['services']['added']) +
+            len(self.metadata['services']['updated']) +
+            len(self.metadata['services']['unchanged'])
+        )
+        
+        # Write summary to log
+        self._write_log(f"\n{'='*80}")
+        self._write_log(f"SYNC COMPLETE - {status.upper()}")
+        self._write_log(f"{'='*80}")
+        self._write_log(f"End Time: {end_time}")
+        self._write_log(f"Duration: {duration:.2f} seconds")
+        self._write_log(f"\nSummary:")
+        self._write_log(f"  Services Added: {len(self.metadata['services']['added'])}")
+        self._write_log(f"  Services Updated: {len(self.metadata['services']['updated'])}")
+        self._write_log(f"  Services Unchanged: {len(self.metadata['services']['unchanged'])}")
+        self._write_log(f"  Total Services: {self.metadata['services']['total']}")
+        self._write_log(f"  Golden Branches Created: {self.metadata['golden_branches']['total_created']}")
+        self._write_log(f"  Errors: {len(self.metadata['errors'])}")
+        self._write_log(f"{'='*80}")
+        
+        # Save metadata as JSON
+        with open(self.metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(self.metadata, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"📁 Logs saved to: {self.log_dir}")
+        logger.info(f"   - Log file: {self.log_file.name}")
+        logger.info(f"   - Metadata: {self.metadata_file.name}")
 
 
 def load_vsat_config() -> Dict[str, Any]:
@@ -599,10 +765,14 @@ def sync_vsat_services(
     sync_config: Dict[str, Any],
     filters: Dict[str, Any],
     global_defaults: Dict[str, Any],
-    session: requests.Session
+    session: requests.Session,
+    existing_vsat_names: Set[str] = None
 ) -> Tuple[int, int, int, List[str]]:
     """
     Sync all services from a VSAT to the database.
+    
+    Args:
+        existing_vsat_names: Set of VSATs that existed before this sync (for detecting new VSATs)
     
     Returns:
         (added_count, updated_count, unchanged_count, errors)
@@ -613,6 +783,16 @@ def sync_vsat_services(
     if not vsat.get('enabled', True):
         logger.info(f"⏭️  Skipping disabled VSAT: {vsat_name}")
         return (0, 0, 0, [])
+    
+    # Check if this is a new VSAT
+    is_new_vsat = existing_vsat_names is not None and vsat_name not in existing_vsat_names
+    
+    # Initialize VSAT logger (only for new VSATs or if configured to log all)
+    vsat_logger = None
+    if is_new_vsat or sync_config.get('log_all_syncs', False):
+        vsat_logger = VSATSyncLogger(vsat_name, is_new_vsat=is_new_vsat)
+        vsat_logger.log(f"Starting sync for VSAT: {vsat_name}")
+        vsat_logger.log(f"VSAT URL: {vsat_url}")
     
     logger.info(f"\n{'='*80}")
     logger.info(f"🔄 Syncing VSAT: {vsat_name}")
@@ -666,8 +846,12 @@ def sync_vsat_services(
                             description=project.get('description', '')
                         )
                         updated_count += 1
+                        if vsat_logger:
+                            vsat_logger.add_service(service_id, service_name, repo_url, 'updated')
                     else:
                         unchanged_count += 1
+                        if vsat_logger:
+                            vsat_logger.add_service(service_id, service_name, repo_url, 'unchanged')
                     
                     # Check if service has golden branches - if not, create them
                     if sync_config.get('create_golden_branches', True):
@@ -709,6 +893,8 @@ def sync_vsat_services(
                         description=project.get('description', '')
                     )
                     added_count += 1
+                    if vsat_logger:
+                        vsat_logger.add_service(service_id, service_name, repo_url, 'added')
                     
                     # Collect new services for parallel branch creation
                     if sync_config.get('create_golden_branches', True):
@@ -724,6 +910,8 @@ def sync_vsat_services(
                 error_msg = f"Error processing {project.get('name', 'unknown')}: {e}"
                 logger.error(f"   ❌ {error_msg}")
                 errors.append(error_msg)
+                if vsat_logger:
+                    vsat_logger.add_error(error_msg)
         
         # Phase 2: Create golden branches for all new services in parallel (optimized)
         branches_created_count = 0
@@ -774,8 +962,13 @@ def sync_vsat_services(
                     
                     if success:
                         branches_created_count += branch_count
+                        # Log branch creation to VSAT logger
+                        if vsat_logger:
+                            vsat_logger.add_golden_branches(service_id, branches or {})
                     else:
                         branches_failed_count += 1
+                        if vsat_logger:
+                            vsat_logger.add_error(f"Failed to create branches for {service_id}")
                     
                     # Progress update every 10 services or at completion
                     if completed % 10 == 0 or completed == len(new_services_for_branches):
@@ -799,10 +992,18 @@ def sync_vsat_services(
         if errors:
             logger.warning(f"   ❌ Errors: {len(errors)}")
         
+        # Finalize VSAT logger
+        if vsat_logger:
+            status = "success" if len(errors) == 0 else "partial"
+            vsat_logger.finalize(status)
+        
         return (added_count, updated_count, unchanged_count, errors)
     
     except Exception as e:
         logger.error(f"❌ Failed to sync VSAT {vsat_name}: {e}")
+        if vsat_logger:
+            vsat_logger.add_error(str(e))
+            vsat_logger.finalize("failed")
         return (0, 0, 0, [str(e)])
 
 
@@ -975,6 +1176,9 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
         # Track active VSATs
         active_vsats = {vsat['name'] for vsat in vsats if vsat.get('enabled', True)}
         
+        # Get existing VSATs from database (to detect new ones)
+        existing_vsat_names = {s.get('vsat') for s in existing_services if s.get('vsat')}
+        
         # Sync each VSAT
         total_added = 0
         total_updated = 0
@@ -983,7 +1187,8 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
         
         for vsat in vsats:
             added, updated, unchanged, errors = sync_vsat_services(
-                vsat, gitlab_token, sync_config, filters, global_defaults, session
+                vsat, gitlab_token, sync_config, filters, global_defaults, session,
+                existing_vsat_names=existing_vsat_names
             )
             total_added += added
             total_updated += updated
