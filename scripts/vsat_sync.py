@@ -423,11 +423,11 @@ def create_http_session() -> requests.Session:
         allowed_methods=["GET", "POST"]
     )
     
-    # Set pool size to 30 to accommodate 25 parallel workers + buffer
+    # Set pool size to 60 to accommodate 50 parallel workers + buffer
     adapter = HTTPAdapter(
         max_retries=retry_strategy, 
-        pool_connections=30,  # Increased from 10 to match worker count
-        pool_maxsize=30       # Increased from 10 to match worker count
+        pool_connections=60,  # Matches 50 workers + 10 buffer
+        pool_maxsize=60       # Matches 50 workers + 10 buffer
     )
     session.mount("http://", adapter)
     session.mount("https://", adapter)
@@ -708,7 +708,8 @@ def check_main_branch_parallel(
     
     filtered_projects = list(projects_with_main_default)
     
-    with ThreadPoolExecutor(max_workers=25) as executor:
+    # Increased to 50 for better performance (safe for most GitLab rate limits)
+    with ThreadPoolExecutor(max_workers=50) as executor:
         futures = {executor.submit(check_branch, proj): proj for proj in projects_to_check}
         
         for future in as_completed(futures):
