@@ -293,6 +293,11 @@ def create_config_only_branch(
         
         log_and_print(f"Filtered {len(checked_out_files)} config files")
         
+        # Skip if no config files found
+        if len(checked_out_files) == 0:
+            log_and_print(f"⚠️ No config files found in repository, skipping branch creation", "warning")
+            return False
+        
         # Create orphan branch with only config files
         log_and_print(f"Creating orphan branch with config files only...")
         
@@ -300,7 +305,12 @@ def create_config_only_branch(
         repo.git.checkout('--orphan', new_branch_name)
         
         # Clear the index completely to remove any references to files from the original branch
-        repo.git.rm('-rf', '--cached', '.')
+        # Use --sparse flag to work with sparse-checkout enabled repositories
+        try:
+            repo.git.rm('-rf', '--cached', '--sparse', '.')
+        except GitCommandError:
+            # Fallback: If --sparse flag is not supported, try without it
+            repo.git.rm('-rf', '--cached', '.')
         
         # Use git read-tree to explicitly build tree with config files only
         try:
@@ -489,6 +499,11 @@ def create_env_specific_config_branch(
         
         log_and_print(f"Found {len(checked_out_files)} config files in {main_branch}")
         
+        # Skip if no config files found
+        if len(checked_out_files) == 0:
+            log_and_print(f"⚠️ No config files found in repository, skipping branch creation", "warning")
+            return False
+        
         # Log file distribution before filtering
         log_environment_distribution(checked_out_files)
         
@@ -501,7 +516,13 @@ def create_env_specific_config_branch(
         # Create orphan branch
         log_and_print(f"Creating orphan branch with {environment}-specific config files...")
         repo.git.checkout('--orphan', new_branch_name)
-        repo.git.rm('-rf', '--cached', '.')
+        
+        # Clear the index with --sparse flag to work with sparse-checkout enabled repositories
+        try:
+            repo.git.rm('-rf', '--cached', '--sparse', '.')
+        except GitCommandError:
+            # Fallback: If --sparse flag is not supported, try without it
+            repo.git.rm('-rf', '--cached', '.')
         
         # Build tree with environment-specific files only
         repo.git.read_tree('--empty')
@@ -656,8 +677,12 @@ def create_selective_golden_branch(
         log_and_print(f"🌿 Creating new golden branch with merged state...")
         golden_repo.git.checkout('--orphan', new_branch_name)
         
-        # Clear index
-        golden_repo.git.rm('-rf', '--cached', '.')
+        # Clear index with --sparse flag to work with sparse-checkout enabled repositories
+        try:
+            golden_repo.git.rm('-rf', '--cached', '--sparse', '.')
+        except GitCommandError:
+            # Fallback: If --sparse flag is not supported, try without it
+            golden_repo.git.rm('-rf', '--cached', '.')
         
         # Add all files (old golden + approved drift files)
         golden_repo.git.add('.')
