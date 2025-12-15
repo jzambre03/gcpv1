@@ -502,14 +502,16 @@ def fetch_user_projects(
     filtered_projects = apply_filters(all_projects, filters)
     logger.info(f"   After filtering: {len(filtered_projects)} projects")
     
-    # Check for main branch
-    projects_with_main = check_main_branch_parallel(
-        filtered_projects, gitlab_token, session
-    )
-    
-    logger.info(f"   With main branch: {len(projects_with_main)} projects")
-    
-    return projects_with_main
+    # Check for main branch only if required
+    if filters.get('require_main_branch', True):
+        projects_with_main = check_main_branch_parallel(
+            filtered_projects, gitlab_token, session
+        )
+        logger.info(f"   With main branch: {len(projects_with_main)} projects")
+        return projects_with_main
+    else:
+        logger.info(f"   ⚠️  Skipping main branch check (require_main_branch=False)")
+        return filtered_projects
 
 
 def fetch_vsat_projects(
@@ -593,14 +595,16 @@ def fetch_vsat_projects(
     filtered_projects = apply_filters(all_projects, filters)
     logger.info(f"   After filtering: {len(filtered_projects)} projects")
     
-    # Check for main branch (optimized with parallel checking)
-    projects_with_main = check_main_branch_parallel(
-        filtered_projects, gitlab_token, session
-    )
-    
-    logger.info(f"   With main branch: {len(projects_with_main)} projects")
-    
-    return projects_with_main
+    # Check for main branch only if required
+    if filters.get('require_main_branch', True):
+        projects_with_main = check_main_branch_parallel(
+            filtered_projects, gitlab_token, session
+        )
+        logger.info(f"   With main branch: {len(projects_with_main)} projects")
+        return projects_with_main
+    else:
+        logger.info(f"   ⚠️  Skipping main branch check (require_main_branch=False)")
+        return filtered_projects
 
 
 def apply_filters(projects: List[Dict], filters: Dict[str, Any]) -> List[Dict]:
