@@ -139,60 +139,54 @@ def load_services_from_db() -> Dict[str, Any]:
         return {}
 
 
-def initialize_default_services():
+def initialize_services_display():
     """
-    Initialize database with default service if no services exist.
-    This runs once on startup to seed the database.
+    Display services loaded from database.
+    Services are managed via VSAT Master Config system.
     """
     try:
-        # Check if any services exist
-        existing_services = get_all_services(active_only=False)
+        services_list = get_all_services(active_only=True)
         
-        if not existing_services:
-            logger.info("📦 No services in database, adding default service...")
-            
-            # Add default service - CXP PTG Adapter
-            add_service(
-                service_id="cxp_ptg_adapter",
-                service_name="CXP PTG Adapter",
-                repo_url="https://gitlab.verizon.com/saja9l7/cxp-ptg-adapter.git",
-                main_branch="main",
-                environments=["prod", "alpha", "beta1", "beta2"],
-                config_paths=DEFAULT_CONFIG_PATHS,
-                description="CXP Payment Gateway Adapter Service"
-            )
-            
-            logger.info("✅ Default service added to database")
-            logger.info("💡 To add more services, use the /api/services endpoint or database functions")
+        if not services_list:
+            logger.info("ℹ️  No services in database")
+            logger.info("💡 To add services:")
+            logger.info("   1. Add VSATs to config/vsat_master.yaml")
+            logger.info("   2. Services will be automatically synced from GitLab")
+            logger.info("   3. Or use: python scripts/migrate_add_services_table.py")
+            return
+        
+        print(f"🏢 Services Loaded from Database:")
+        for service in services_list:
+            print(f"   {service['service_id']}: {service['service_name']}")
+            print(f"      Repo: {service['repo_url']}")
+            print(f"      Main Branch: {service['main_branch']}")
+            print(f"      Environments: {', '.join(service['environments'])}")
+        print()
     except Exception as e:
-        logger.error(f"❌ Error initializing default services: {e}")
+        logger.error(f"❌ Error loading services: {e}")
 
 
 # Initialize database and load services
 init_db()
-initialize_default_services()
 SERVICES_CONFIG = load_services_from_db()
+initialize_services_display()
 
-print(f"🏢 Services Loaded from Database:")
-for service_id, config in SERVICES_CONFIG.items():
-    print(f"   {service_id}: {config['name']}")
-    print(f"      Repo: {config['repo_url']}")
-    print(f"      Main Branch: {config['main_branch']}")
-    print(f"      Environments: {', '.join(config['environments'])}")
-print()
-
-# Set defaults from first service for backward compatibility
+# Set defaults from first service for backward compatibility (if services exist)
 # Note: These are only used for legacy endpoints - each service has its own URL
-DEFAULT_REPO_URL = os.getenv("DEFAULT_REPO_URL", list(SERVICES_CONFIG.values())[0]["repo_url"])
-DEFAULT_MAIN_BRANCH = os.getenv("DEFAULT_MAIN_BRANCH", list(SERVICES_CONFIG.values())[0]["main_branch"])
-DEFAULT_ENVIRONMENT = os.getenv("DEFAULT_ENVIRONMENT", "prod")
+DEFAULT_REPO_URL = os.getenv("DEFAULT_REPO_URL", 
+                             list(SERVICES_CONFIG.values())[0]["repo_url"] if SERVICES_CONFIG else "https://gitlab.example.com/org/golden_config.git")
+DEFAULT_MAIN_BRANCH = os.getenv("DEFAULT_MAIN_BRANCH", 
+                                list(SERVICES_CONFIG.values())[0]["main_branch"] if SERVICES_CONFIG else "main")
+DEFAULT_ENVIRONMENT = os.getenv("DEFAULT_ENVIRONMENT", 
+                               list(SERVICES_CONFIG.values())[0]["environments"][0] if SERVICES_CONFIG else "prod")
 
-print(f"🔧 Legacy Default Configuration (from {list(SERVICES_CONFIG.keys())[0]}):")
-print(f"   DEFAULT_REPO_URL: {DEFAULT_REPO_URL}")
-print(f"   DEFAULT_MAIN_BRANCH: {DEFAULT_MAIN_BRANCH}")
-print(f"   DEFAULT_ENVIRONMENT: {DEFAULT_ENVIRONMENT}")
-print(f"   ⚠️  Note: Each service uses its own configured URL and environments")
-print()
+if SERVICES_CONFIG:
+    print(f"🔧 Legacy Default Configuration (from {list(SERVICES_CONFIG.keys())[0]}):")
+    print(f"   DEFAULT_REPO_URL: {DEFAULT_REPO_URL}")
+    print(f"   DEFAULT_MAIN_BRANCH: {DEFAULT_MAIN_BRANCH}")
+    print(f"   DEFAULT_ENVIRONMENT: {DEFAULT_ENVIRONMENT}")
+    print(f"   ⚠️  Note: Each service uses its own configured URL and environments")
+    print()
 
 # Request models
 class ValidationRequest(BaseModel):
