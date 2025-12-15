@@ -44,6 +44,9 @@ sync:
   parallel_branch_creation: true
   max_branch_workers: 5
   
+  # Logging
+  log_all_syncs: true  # Create logs for every sync (not just new VSATs)
+  
   # API settings
   api_delay: 0.5  # seconds between API calls
   max_concurrent_requests: 10
