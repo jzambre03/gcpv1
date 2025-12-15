@@ -1438,9 +1438,152 @@ commit_message = f"Merge branch '{new_branch_name}'\n\n" \
 
 ---
 
-## 6. Detailed Code Walkthrough
+## 6. Detailed Code Walkthrough - Complete `scripts/vsat_sync.py`
 
-### 6.1 Every Line of `load_vsat_config()` Explained
+This section walks through **EVERY function** in `vsat_sync.py` with line-by-line explanations.
+
+**File**: `scripts/vsat_sync.py` (980 lines)
+
+---
+
+### 6.1 File Header & Imports (Lines 1-60)
+
+```python
+#!/usr/bin/env python3
+```
+→ **Line 1**: Shebang - tells system to use Python 3 to run this script
+
+```python
+"""
+VSAT Master Config Sync - Automated Service Discovery and Management
+...
+"""
+```
+→ **Lines 2-16**: Module docstring - explains what this script does
+
+```python
+import sys
+import yaml
+import hashlib
+import time
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Set, Tuple, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dotenv import load_dotenv
+```
+→ **Lines 18-26**: Standard library imports
+- `sys`: System operations (exit codes, path manipulation)
+- `yaml`: Parse YAML config files
+- `hashlib`: SHA256 hashing for change detection
+- `time`: Sleep for rate limiting
+- `Path`: Object-oriented file paths
+- `datetime`: Timestamps for branch names
+- `typing`: Type hints for better IDE support
+- `ThreadPoolExecutor`: Parallel execution
+- `load_dotenv`: Load .env file variables
+
+```python
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+```
+→ **Lines 28-30**: Add project root to Python path
+- `__file__`: Path to current file (`scripts/vsat_sync.py`)
+- `.parent`: Go up one level (`scripts/`)
+- `.parent`: Go up again (project root)
+- `sys.path.insert(0, ...)`: Add to front of module search path
+
+```python
+# Load environment variables
+load_dotenv()
+```
+→ **Lines 32-33**: Load `.env` file
+- Reads `.env` from project root
+- Makes `GITLAB_TOKEN`, etc. available via `os.getenv()`
+
+```python
+import os
+import logging
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+```
+→ **Lines 35-39**: External library imports
+- `os`: Environment variables
+- `logging`: Structured logging
+- `requests`: HTTP client for GitLab API
+- `HTTPAdapter`: Custom HTTP adapter with retries
+- `Retry`: Retry strategy configuration
+
+```python
+from shared.db import (
+    get_db_connection, add_service, get_service_by_id, 
+    get_all_services, init_db
+)
+from shared.git_operations import (
+    create_config_only_branch,
+    create_env_specific_config_branch
+)
+from shared.golden_branch_tracker import add_golden_branch
+```
+→ **Lines 41-49**: Project-specific imports
+- Database functions from `shared/db.py`
+- Git operations from `shared/git_operations.py`
+- Branch tracking from `shared/golden_branch_tracker.py`
+
+```python
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+```
+→ **Lines 51-55**: Configure logging
+- **Line 52**: Set log level to INFO (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- **Line 53**: Format: timestamp, logger name, level, message
+- **Line 55**: Get logger for this module
+
+```python
+# Configuration
+MASTER_CONFIG_FILE = project_root / "config" / "vsat_master.yaml"
+DETAILED_CONFIG_FILE = project_root / "config" / "vsat_config.yaml"
+CONFIG_HASH_FILE = project_root / "config" / ".vsat_master_hash"
+```
+→ **Lines 57-60**: Define config file paths
+- **Line 58**: Path to master config (VSAT list)
+- **Line 59**: Path to detailed config (settings)
+- **Line 60**: Path to hash file (change detection)
+
+---
+
+### 6.2 `VSATSyncError` Exception Class (Lines 63-65)
+
+```python
+class VSATSyncError(Exception):
+    """Custom exception for VSAT sync errors"""
+    pass
+```
+
+**Purpose**: Custom exception for VSAT-specific errors
+
+**Why?**: Allows catching VSAT errors separately from other exceptions
+
+**Usage**:
+```python
+try:
+    sync_services()
+except VSATSyncError as e:
+    # Handle VSAT-specific error
+    logger.error(f"VSAT sync failed: {e}")
+except Exception as e:
+    # Handle other errors
+    logger.error(f"Unexpected error: {e}")
+```
+
+---
+
+### 6.3 Every Line of `load_vsat_config()` Explained (Lines 68-162)
 
 ```python
 def load_vsat_config() -> Dict[str, Any]:
@@ -1622,79 +1765,591 @@ def load_vsat_config() -> Dict[str, Any]:
 
 ## 7. Automation & Scheduling
 
-### 7.1 APScheduler - Weekly Sync
+### 7.1 Complete `main.py` Automation Setup
 
-**Configuration** (`main.py` lines 1851-1865):
+**Location**: `main.py` (Lines 1820-1923)
+
+The automation is integrated directly into the FastAPI server. Here's the complete flow:
+
+---
+
+#### Step 1: Import Required Libraries (Lines 1-20 in imports section)
 
 ```python
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-
-scheduler = BackgroundScheduler()
-weekly_cron = config.get('sync_config', {}).get('weekly_schedule', '0 2 0')
-minute, hour, day_of_week = weekly_cron.split()
-
-scheduler.add_job(
-    run_sync,                    # Function to call
-    trigger=CronTrigger(
-        day_of_week=day_of_week,  # Sunday=0, Monday=1, ..., Saturday=6
-        hour=int(hour),           # Hour (0-23)
-        minute=int(minute)        # Minute (0-59)
-    ),
-    id='weekly_vsat_sync',
-    name='Weekly VSAT Sync',
-    replace_existing=True
-)
-scheduler.start()
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+from scripts.vsat_sync import run_sync, load_vsat_config
 ```
 
-**Cron Format**: `"minute hour day_of_week"`
-
-Examples:
-- `"0 2 0"` → Sunday at 2:00 AM
-- `"30 14 3"` → Wednesday at 2:30 PM
-- `"0 0 *"` → Every day at midnight
+**What These Do**:
+- **`BackgroundScheduler`**: Runs scheduled tasks in background threads
+- **`CronTrigger`**: Defines when scheduled tasks should run (like cron)
+- **`Observer`**: Monitors file system for changes
+- **`FileSystemEventHandler`**: Base class for handling file events
+- **`run_sync`**: The main sync function from `vsat_sync.py`
 
 ---
 
-### 7.2 watchdog - File Monitoring
+#### Step 2: Define File Change Handler (Lines 1820-1838)
 
-**Configuration** (`main.py` lines 1868-1889):
+**Location**: `main.py` Lines 1820-1838
 
 ```python
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-
 class ConfigFileChangeHandler(FileSystemEventHandler):
+    """
+    Custom event handler that watches for config file changes.
+    Inherits from FileSystemEventHandler (watchdog library).
+    """
+    
     def __init__(self):
-        self.last_sync = datetime.now()
-        self.debounce_seconds = 5  # Prevent rapid re-syncs
+        """Initialize the handler with debouncing"""
+        self.last_sync = datetime.now()     # Track last sync time
+        self.debounce_seconds = 5           # Minimum 5 seconds between syncs
     
     def on_modified(self, event):
+        """
+        Called automatically by watchdog when ANY file in watched directory changes.
+        
+        Args:
+            event: FileSystemEvent object with details about what changed
+                   event.src_path = full path to changed file
+                   event.is_directory = True if directory, False if file
+        """
+        # STEP 1: Check if this is one of our config files
         if event.src_path.endswith(('vsat_master.yaml', 'vsat_config.yaml')):
+            
+            # STEP 2: Debounce - prevent rapid re-syncs
             now = datetime.now()
-            if (now - self.last_sync).total_seconds() > self.debounce_seconds:
-                logger.info(f"Config file changed: {event.src_path}")
-                logger.info("Triggering VSAT sync...")
+            time_since_last = (now - self.last_sync).total_seconds()
+            
+            if time_since_last > self.debounce_seconds:
+                # STEP 3: Log the change
+                logger.info(f"🔔 Config file changed: {event.src_path}")
+                logger.info("🔄 Triggering VSAT sync...")
+                
+                # STEP 4: Trigger sync
                 run_sync()
+                
+                # STEP 5: Update last sync time
                 self.last_sync = now
-
-event_handler = ConfigFileChangeHandler()
-config_observer = Observer()
-config_observer.schedule(
-    event_handler,
-    path=str(MASTER_CONFIG_FILE.parent),  # Watch config/ directory
-    recursive=False
-)
-config_observer.start()
+            else:
+                # Debounced - too soon after last sync
+                logger.debug(f"⏸️  Debounced: Only {time_since_last:.1f}s since last sync")
 ```
 
-**How It Works**:
-1. Observer watches `config/` directory
-2. On file modification, `on_modified()` is called
-3. Checks if file is `vsat_master.yaml` or `vsat_config.yaml`
-4. Debounces (5-second minimum between syncs)
-5. Triggers `run_sync()`
+**Line-by-Line Explanation**:
+
+- **Line 1820**: Class definition - inherits from `FileSystemEventHandler`
+- **Line 1824**: `__init__` method - called when handler is created
+- **Line 1825**: Store current time as last sync time
+- **Line 1826**: Set debounce interval (5 seconds)
+- **Line 1828**: `on_modified` method - automatically called by watchdog on file changes
+- **Line 1835**: Check if changed file is one of our config files
+- **Line 1836**: Get current time
+- **Line 1837**: Calculate seconds since last sync
+- **Line 1839**: Only proceed if > 5 seconds have passed
+- **Line 1840-1841**: Log the change
+- **Line 1844**: Call `run_sync()` function from `vsat_sync.py`
+- **Line 1847**: Update last sync time to prevent rapid re-triggers
+
+**Why Debouncing?**
+When you save a file, some editors trigger multiple "modified" events:
+1. File opened for writing
+2. Content written
+3. File closed
+4. Metadata updated
+
+Without debouncing, sync would run 4 times! Debouncing ensures only one sync per change.
+
+---
+
+#### Step 3: Start VSAT Automation (Lines 1840-1893)
+
+**Location**: `main.py` Lines 1840-1893
+
+```python
+def start_vsat_automation():
+    """
+    Initialize and start VSAT automation system.
+    This runs:
+    1. Initial sync on startup
+    2. Scheduled weekly syncs
+    3. Real-time config file monitoring
+    """
+    global scheduler, config_observer
+    
+    logger.info("\n" + "="*80)
+    logger.info("🚀 Starting VSAT Automation")
+    logger.info("="*80)
+```
+
+**Line 1841**: Function definition
+**Line 1848**: Declare global variables (so shutdown function can access them)
+**Lines 1850-1852**: Log startup banner
+
+---
+
+##### Phase 1: Initial Sync (Lines 1854-1865)
+
+```python
+    # ============================================================================
+    # PHASE 1: INITIAL SYNC
+    # Run sync immediately on startup to ensure DB is up-to-date
+    # ============================================================================
+    try:
+        logger.info("\n📊 Running initial VSAT sync...")
+        result = run_sync()
+        
+        if result.get('status') == 'success':
+            added = result.get('added', 0)
+            updated = result.get('updated', 0)
+            logger.info(f"✅ Initial sync: +{added} added, ~{updated} updated")
+        else:
+            logger.warning(f"⚠️  Initial sync had issues: {result.get('error', 'Unknown')}")
+    
+    except Exception as e:
+        logger.error(f"❌ Initial sync failed: {e}")
+        logger.warning("   Will retry on next scheduled run")
+```
+
+**What This Does**:
+1. **Line 1859**: Log start of initial sync
+2. **Line 1860**: Call `run_sync()` from `vsat_sync.py`
+   - This checks if DB is empty
+   - Fetches all services from GitLab
+   - Creates golden branches
+   - Returns summary dict
+3. **Lines 1862-1865**: Log results (services added, updated)
+4. **Lines 1867-1869**: Catch errors (don't crash if GitLab is down)
+
+**Why Initial Sync?**
+- Ensures system is ready immediately
+- Catches any config changes that happened while server was down
+- Creates branches for services missing them
+
+---
+
+##### Phase 2: Setup Weekly Scheduler (Lines 1867-1888)
+
+```python
+    # ============================================================================
+    # PHASE 2: WEEKLY SCHEDULED SYNC
+    # Setup APScheduler to run sync weekly at specified time
+    # ============================================================================
+    try:
+        logger.info("\n⏰ Setting up weekly scheduler...")
+        
+        # Load config to get schedule
+        config = load_vsat_config()
+        sync_config = config.get('sync_config', {})
+        weekly_cron = sync_config.get('weekly_schedule', '0 2 0')
+        
+        logger.info(f"   Schedule: {weekly_cron} (minute hour day_of_week)")
+        
+        # Parse cron string
+        minute, hour, day_of_week = weekly_cron.split()
+        
+        # Create scheduler instance
+        scheduler = BackgroundScheduler(
+            timezone='America/New_York'  # Set your timezone
+        )
+        
+        # Add sync job
+        scheduler.add_job(
+            func=run_sync,               # Function to call
+            trigger=CronTrigger(
+                day_of_week=day_of_week, # Sunday=0, Monday=1, ..., Saturday=6
+                hour=int(hour),          # Hour (0-23)
+                minute=int(minute)       # Minute (0-59)
+            ),
+            id='weekly_vsat_sync',       # Unique job ID
+            name='Weekly VSAT Sync',     # Human-readable name
+            replace_existing=True,       # Replace if job already exists
+            misfire_grace_time=3600      # If server down, run within 1 hour
+        )
+        
+        # Start the scheduler
+        scheduler.start()
+        
+        logger.info(f"✅ Scheduler started: Next run at {scheduler.get_job('weekly_vsat_sync').next_run_time}")
+    
+    except Exception as e:
+        logger.error(f"❌ Failed to start scheduler: {e}")
+```
+
+**Line-by-Line Explanation**:
+
+**Lines 1873-1876**: Load config to get schedule
+- Opens `vsat_config.yaml`
+- Reads `sync.weekly_schedule` (default: `"0 2 0"`)
+
+**Line 1881**: Parse cron string into components
+- `"0 2 0"` → `minute=0, hour=2, day_of_week=0`
+
+**Lines 1884-1886**: Create `BackgroundScheduler` instance
+- **BackgroundScheduler**: Runs in background thread (doesn't block main thread)
+- **timezone**: Important! Ensures schedule runs in correct timezone
+
+**Lines 1889-1901**: Add job to scheduler
+- **Line 1890**: `func=run_sync` - The function to call
+- **Lines 1891-1895**: `trigger=CronTrigger(...)` - When to call it
+  - `day_of_week=0`: Sunday (0=Sunday, 6=Saturday)
+  - `hour=2`: 2 AM
+  - `minute=0`: At the top of the hour
+  - Combined: "Every Sunday at 2:00 AM"
+- **Line 1897**: `id='weekly_vsat_sync'` - Unique identifier
+- **Line 1898**: `name='Weekly VSAT Sync'` - Display name
+- **Line 1899**: `replace_existing=True` - If restarting, replace old job
+- **Line 1900**: `misfire_grace_time=3600` - If server was down at 2 AM, run within 1 hour after startup
+
+**Line 1904**: Start the scheduler (begins monitoring time)
+
+**Line 1906**: Log next run time (useful for debugging)
+
+**Cron Format Examples**:
+
+| Cron String | Meaning |
+|-------------|---------|
+| `"0 2 0"` | Sunday at 2:00 AM |
+| `"30 14 1"` | Monday at 2:30 PM |
+| `"0 0 *"` | Every day at midnight |
+| `"0 12 1,3,5"` | Mon, Wed, Fri at noon |
+| `"*/15 * *"` | Every 15 minutes, every day |
+
+**How APScheduler Works**:
+
+```
+1. Server starts
+   ↓
+2. BackgroundScheduler created
+   ↓
+3. Job added with CronTrigger
+   ↓
+4. scheduler.start() called
+   ↓
+5. Background thread starts
+   ├─ Checks current time every second
+   ├─ Compares with job trigger
+   └─ When match: calls run_sync()
+   ↓
+6. Repeats forever until server stops
+```
+
+---
+
+##### Phase 3: Setup File Watcher (Lines 1890-1911)
+
+```python
+    # ============================================================================
+    # PHASE 3: REAL-TIME FILE MONITORING
+    # Setup watchdog to monitor config file changes
+    # ============================================================================
+    try:
+        logger.info("\n👁️  Setting up config file watcher...")
+        
+        # Create event handler instance
+        event_handler = ConfigFileChangeHandler()
+        
+        # Create observer (the file system monitor)
+        config_observer = Observer()
+        
+        # Tell observer what to watch
+        config_observer.schedule(
+            event_handler,                          # Handler to call on events
+            path=str(MASTER_CONFIG_FILE.parent),   # Directory to watch (config/)
+            recursive=False                         # Don't watch subdirectories
+        )
+        
+        # Start watching
+        config_observer.start()
+        
+        logger.info(f"✅ Watching: {MASTER_CONFIG_FILE.parent}")
+        logger.info(f"   Files: vsat_master.yaml, vsat_config.yaml")
+        logger.info(f"   Debounce: {event_handler.debounce_seconds}s")
+    
+    except Exception as e:
+        logger.error(f"❌ Failed to start file watcher: {e}")
+    
+    logger.info("\n" + "="*80)
+    logger.info("✅ VSAT Automation Started Successfully")
+    logger.info("="*80)
+```
+
+**Line-by-Line Explanation**:
+
+**Line 1898**: Create handler instance
+- Instantiates `ConfigFileChangeHandler` class defined earlier
+- Sets `last_sync` to now, `debounce_seconds` to 5
+
+**Line 1901**: Create `Observer` instance
+- This is the main watchdog component
+- Monitors file system events (create, modify, delete, move)
+
+**Lines 1904-1908**: Configure what to watch
+- **Line 1905**: `event_handler` - Our custom handler with `on_modified()` method
+- **Line 1906**: `path` - Directory to monitor (`config/`)
+- **Line 1907**: `recursive=False` - Only watch this directory, not subdirectories
+
+**Line 1911**: Start the observer
+- Starts background thread that monitors file system
+- Calls `event_handler.on_modified()` when files change
+
+**Lines 1913-1915**: Log configuration
+
+**How watchdog Works**:
+
+```
+1. Observer started
+   ↓
+2. Background thread polls file system
+   ├─ Uses OS-specific APIs:
+   │  ├─ Linux: inotify
+   │  ├─ macOS: FSEvents
+   │  └─ Windows: ReadDirectoryChangesW
+   ↓
+3. User edits vsat_master.yaml
+   ↓
+4. OS notifies watchdog: "File modified"
+   ↓
+5. Observer calls: event_handler.on_modified(event)
+   ↓
+6. Handler checks:
+   ├─ Is it a config file? ✅
+   ├─ 5 seconds since last sync? ✅
+   └─ Call run_sync()
+   ↓
+7. Sync runs automatically
+   ↓
+8. Back to step 2 (continues watching)
+```
+
+---
+
+#### Step 4: Stop VSAT Automation (Lines 1895-1911)
+
+**Location**: `main.py` Lines 1895-1911
+
+```python
+def stop_vsat_automation():
+    """
+    Gracefully shutdown VSAT automation.
+    Called when server stops (Ctrl+C or systemd stop).
+    """
+    global scheduler, config_observer
+    
+    logger.info("\n🛑 Stopping VSAT Automation...")
+    
+    # Stop scheduler
+    if scheduler:
+        try:
+            scheduler.shutdown(wait=True)  # Wait for current job to finish
+            logger.info("✅ VSAT Scheduler stopped")
+        except Exception as e:
+            logger.error(f"❌ Error stopping scheduler: {e}")
+    
+    # Stop file watcher
+    if config_observer:
+        try:
+            config_observer.stop()          # Stop monitoring
+            config_observer.join(timeout=5) # Wait up to 5s for thread to finish
+            logger.info("✅ VSAT File watcher stopped")
+        except Exception as e:
+            logger.error(f"❌ Error stopping file watcher: {e}")
+```
+
+**Line-by-Line Explanation**:
+
+**Lines 1902-1906**: Stop APScheduler
+- **Line 1902**: Check if scheduler exists
+- **Line 1904**: `scheduler.shutdown(wait=True)` - Stop scheduler
+  - `wait=True`: Wait for currently running job to finish (graceful)
+  - `wait=False`: Kill immediately (can corrupt data)
+- **Line 1905**: Log success
+
+**Lines 1909-1914**: Stop watchdog
+- **Line 1909**: Check if observer exists
+- **Line 1911**: `config_observer.stop()` - Stop monitoring files
+- **Line 1912**: `config_observer.join(timeout=5)` - Wait for thread to exit
+  - `timeout=5`: Maximum 5 seconds wait
+  - Prevents hanging on shutdown
+- **Line 1913**: Log success
+
+**Why Graceful Shutdown?**
+- Prevents data corruption (sync might be writing to DB)
+- Saves state properly
+- Allows cleanup (temp files, connections, etc.)
+
+---
+
+#### Step 5: Hook into FastAPI Lifecycle (Lines 1913-1923)
+
+**Location**: `main.py` Lines 1913-1923
+
+```python
+@app.on_event("startup")
+async def startup_event():
+    """
+    FastAPI lifecycle hook - runs when server starts.
+    Called automatically after app initialization.
+    """
+    logger.info("🚀 FastAPI server starting...")
+    start_vsat_automation()
+    logger.info("✅ Server ready")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """
+    FastAPI lifecycle hook - runs when server stops.
+    Called automatically before app shutdown (Ctrl+C, systemd stop, etc.).
+    """
+    logger.info("🛑 FastAPI server stopping...")
+    stop_vsat_automation()
+    logger.info("✅ Server stopped cleanly")
+```
+
+**Line-by-Line Explanation**:
+
+**Line 1913**: `@app.on_event("startup")` - Decorator
+- Registers function to run on server startup
+- Called once after FastAPI initializes
+
+**Lines 1914-1918**: Startup handler
+- **Line 1917**: Call `start_vsat_automation()`
+- This triggers: initial sync + scheduler setup + file watcher
+
+**Line 1920**: `@app.on_event("shutdown")` - Decorator
+- Registers function to run on server shutdown
+- Called when you press Ctrl+C or kill process
+
+**Lines 1921-1926**: Shutdown handler
+- **Line 1925**: Call `stop_vsat_automation()`
+- This stops: scheduler + file watcher
+
+**Complete Lifecycle**:
+
+```
+1. python main.py
+   ↓
+2. FastAPI initializes
+   ↓
+3. startup_event() called
+   ↓
+4. start_vsat_automation()
+   ├─ Initial sync runs
+   ├─ Scheduler starts (weekly job)
+   └─ File watcher starts
+   ↓
+5. Server running
+   ├─ Handles HTTP requests
+   ├─ Scheduler checks time every second
+   └─ File watcher monitors config/
+   ↓
+6. Ctrl+C pressed
+   ↓
+7. shutdown_event() called
+   ↓
+8. stop_vsat_automation()
+   ├─ Scheduler stops
+   └─ File watcher stops
+   ↓
+9. Process exits
+```
+
+---
+
+### 7.2 Complete Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    python main.py                                │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌───────────────────────────────────────────────────────────────────┐
+│                  FastAPI Initialization                           │
+│  • Load config                                                    │
+│  • Setup routes                                                   │
+│  • Initialize database                                            │
+└───────────────────────────┬───────────────────────────────────────┘
+                            │
+                            ▼
+┌───────────────────────────────────────────────────────────────────┐
+│              @app.on_event("startup")                             │
+│              ├─ startup_event()                                   │
+│              └─ start_vsat_automation()                           │
+└───────────────────────────┬───────────────────────────────────────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        │                   │                   │
+        ▼                   ▼                   ▼
+┌───────────────┐ ┌─────────────────┐ ┌─────────────────────┐
+│ INITIAL SYNC  │ │   APSCHEDULER   │ │     WATCHDOG        │
+│               │ │                 │ │                     │
+│ run_sync()    │ │ Weekly Cron Job │ │ File System Monitor │
+│               │ │ "0 2 0"         │ │ config/*.yaml       │
+└───────┬───────┘ └────────┬────────┘ └──────────┬──────────┘
+        │                  │                      │
+        ▼                  │                      │
+  Sync Complete            │                      │
+        │                  │                      │
+        └──────────────────┴──────────────────────┘
+                            │
+                            ▼
+        ┌───────────────────────────────────────────┐
+        │         SYSTEM RUNNING                    │
+        │  • HTTP Server active                     │
+        │  • Scheduler checking time                │
+        │  • Watchdog monitoring files              │
+        └───────────────────────────────────────────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        │                   │                   │
+        ▼                   ▼                   ▼
+┌───────────────┐ ┌─────────────────┐ ┌─────────────────────┐
+│ WEEKLY SYNC   │ │  CONFIG CHANGE  │ │   HTTP REQUESTS     │
+│               │ │                 │ │                     │
+│ Cron trigger  │ │ File modified   │ │ /api/validate       │
+│ → run_sync()  │ │ → run_sync()    │ │ /api/analyze        │
+└───────────────┘ └─────────────────┘ └─────────────────────┘
+        │                   │                   │
+        └───────────────────┴───────────────────┘
+                            │
+                            ▼
+                    vsat_sync.py:run_sync()
+                            │
+        ┌───────────────────┼───────────────────┐
+        │                   │                   │
+        ▼                   ▼                   ▼
+┌───────────────┐ ┌─────────────────┐ ┌─────────────────────┐
+│ Check DB      │ │ Load Config     │ │ Fetch from GitLab   │
+│ Empty?        │ │ Hash Changed?   │ │ Create Branches     │
+└───────────────┘ └─────────────────┘ └─────────────────────┘
+        │                   │                   │
+        └───────────────────┴───────────────────┘
+                            │
+                            ▼
+                     Sync Complete
+                            │
+                            ▼
+        ┌───────────────────────────────────────────┐
+        │         CTRL+C or SIGTERM                 │
+        └───────────────────┬───────────────────────┘
+                            │
+                            ▼
+┌───────────────────────────────────────────────────────────────────┐
+│              @app.on_event("shutdown")                            │
+│              ├─ shutdown_event()                                  │
+│              └─ stop_vsat_automation()                            │
+│                 ├─ scheduler.shutdown(wait=True)                  │
+│                 └─ config_observer.stop()                         │
+└───────────────────────────┬───────────────────────────────────────┘
+                            │
+                            ▼
+                      Process Exits
+```
 
 ---
 
