@@ -1194,8 +1194,12 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
                     logger.info(f"   Services needing branches: {', '.join(services_without_branches[:5])}{'...' if len(services_without_branches) > 5 else ''}")
                     force = True
                 else:
-                    logger.info("✅ Config unchanged, all VSATs present, and all services have golden branches - skipping")
-                    return {"status": "skipped", "reason": "config_unchanged_and_branches_exist"}
+                    # Config unchanged, VSATs present, branches exist
+                    # BUT we still need to check if there are new services in GitLab
+                    # Don't skip - let the sync run to detect new services
+                    logger.info("✅ Config unchanged, all VSATs present, and all services have golden branches")
+                    logger.info("   🔍 Running sync to check for new services in GitLab...")
+                    # Don't return here - continue with sync to detect new services
         except Exception as e:
             logger.warning(f"⚠️  Could not check VSAT/branch presence: {e} - forcing sync")
             force = True
