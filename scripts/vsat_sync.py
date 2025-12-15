@@ -410,7 +410,10 @@ def save_config_hash():
 
 
 def create_http_session() -> requests.Session:
-    """Create requests session with retry logic"""
+    """
+    Create requests session with retry logic and connection pooling.
+    Pool size is set to match our parallel worker count (25) to avoid warnings.
+    """
     session = requests.Session()
     
     retry_strategy = Retry(
@@ -420,7 +423,12 @@ def create_http_session() -> requests.Session:
         allowed_methods=["GET", "POST"]
     )
     
-    adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
+    # Set pool size to 30 to accommodate 25 parallel workers + buffer
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy, 
+        pool_connections=30,  # Increased from 10 to match worker count
+        pool_maxsize=30       # Increased from 10 to match worker count
+    )
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     
@@ -680,7 +688,10 @@ def check_main_branch_parallel(
                 return None
             
             # Construct API URL for checking main branch
-            gitlab_base = web_url.split('/-/')[0] if '/-/' in web_url else web_url.rsplit('/', 1)[0]
+            # Parse URL to get just scheme://netloc (e.g., https://gitlab.verizon.com)
+            from urllib.parse import urlparse
+            parsed = urlparse(web_url)
+            gitlab_base = f"{parsed.scheme}://{parsed.netloc}"
             api_url = f"{gitlab_base}/api/v4/projects/{project_id}/repository/branches/main"
             headers = {"PRIVATE-TOKEN": gitlab_token}
             
