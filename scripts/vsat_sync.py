@@ -115,6 +115,9 @@ class VSATSyncLogger:
             "status": "in_progress"
         }
         
+        # Setup Python logging handler to capture ALL module logs
+        self._setup_python_logging()
+        
         # Write initial log
         self._write_log(f"{'='*80}")
         self._write_log(f"VSAT SYNC LOG - {vsat_name}")
@@ -123,6 +126,34 @@ class VSATSyncLogger:
         self._write_log(f"New VSAT: {is_new_vsat}")
         self._write_log(f"Log Directory: {self.log_dir}")
         self._write_log(f"{'='*80}\n")
+    
+    def _setup_python_logging(self):
+        """
+        Setup a Python logging handler to capture logs from ALL modules.
+        This captures logs from git_operations, env_filter, db, etc.
+        """
+        # Create file handler for Python logging
+        file_handler = logging.FileHandler(self.log_file, mode='a', encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        
+        # Create detailed formatter
+        formatter = logging.Formatter(
+            '[%(asctime)s] %(levelname)-8s | %(name)s | %(message)s',
+            datefmt='%H:%M:%S'
+        )
+        file_handler.setFormatter(formatter)
+        
+        # Add to ROOT logger (captures ALL loggers in the system)
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
+        
+        # Ensure child loggers propagate to root
+        for logger_name in ['scripts.vsat_sync', 'shared.git_operations', 'shared.env_filter', 'shared.db']:
+            child_logger = logging.getLogger(logger_name)
+            child_logger.propagate = True
+        
+        # Store handler reference for cleanup
+        self.file_handler = file_handler
     
     def _write_log(self, message: str):
         """Write message to log file"""
@@ -195,6 +226,12 @@ class VSATSyncLogger:
         Args:
             status: 'success', 'failed', or 'partial'
         """
+        # Remove the file handler from root logger to prevent duplicate logs
+        if hasattr(self, 'file_handler'):
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(self.file_handler)
+            self.file_handler.close()
+        
         end_time = datetime.now()
         duration = (end_time - self.start_time).total_seconds()
         
@@ -939,14 +976,14 @@ def sync_vsat_services(
                     )
                     
                     if branches:
-                        return (service_id, True, len(branches))
+                        return (service_id, True, len(branches), branches)  # Return branches dict!
                     else:
                         logger.warning(f"      ⚠️  {service_id}: Failed to create branches")
-                        return (service_id, False, 0)
+                        return (service_id, False, 0, {})
                         
                 except Exception as e:
                     logger.error(f"      ❌ {service_info['service_id']}: Error creating branches: {e}")
-                    return (service_info['service_id'], False, 0)
+                    return (service_info['service_id'], False, 0, {})
             
             # Execute branch creation for all services in parallel
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -958,13 +995,13 @@ def sync_vsat_services(
                 completed = 0
                 for future in as_completed(futures):
                     completed += 1
-                    service_id, success, branch_count = future.result()
+                    service_id, success, branch_count, branches_dict = future.result()
                     
                     if success:
                         branches_created_count += branch_count
                         # Log branch creation to VSAT logger
                         if vsat_logger:
-                            vsat_logger.add_golden_branches(service_id, branches or {})
+                            vsat_logger.add_golden_branches(service_id, branches_dict)
                     else:
                         branches_failed_count += 1
                         if vsat_logger:
