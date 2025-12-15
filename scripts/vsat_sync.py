@@ -84,6 +84,14 @@ def load_vsat_config() -> Dict[str, Any]:
         if 'vsats' not in master_config:
             raise VSATSyncError("Master config file missing 'vsats' section")
         
+        # Check if vsats list is empty or None
+        vsats_list = master_config.get('vsats')
+        if not vsats_list or len(vsats_list) == 0:
+            raise VSATSyncError(
+                "No VSATs found in master config file. "
+                "Please add at least one VSAT to config/vsat_master.yaml"
+            )
+        
         # Check for duplicate VSAT names
         vsat_names = []
         duplicates = []
@@ -248,6 +256,27 @@ def fetch_user_projects(
         
         try:
             response = session.get(url, headers=headers, params=params, timeout=30)
+            
+            # Handle authentication/permission errors
+            if response.status_code == 401:
+                raise VSATSyncError(
+                    f"Authentication failed for user '{username}'. "
+                    f"GitLab token is invalid or expired. Please check GITLAB_TOKEN in .env file."
+                )
+            
+            if response.status_code == 403:
+                raise VSATSyncError(
+                    f"Access denied to user '{username}'. "
+                    f"Your GitLab token does not have permission to access this user's projects. "
+                    f"Please check that your token has 'api' or 'read_api' scope."
+                )
+            
+            if response.status_code == 404:
+                raise VSATSyncError(
+                    f"User '{username}' not found on GitLab. "
+                    f"Please verify the VSAT name/URL in config/vsat_master.yaml"
+                )
+            
             response.raise_for_status()
             
             projects = response.json()
@@ -314,6 +343,20 @@ def fetch_vsat_projects(
         
         try:
             response = session.get(url, headers=headers, params=params, timeout=30)
+            
+            # Handle authentication/permission errors
+            if response.status_code == 401:
+                raise VSATSyncError(
+                    f"Authentication failed for VSAT '{vsat_name}'. "
+                    f"GitLab token is invalid or expired. Please check GITLAB_TOKEN in .env file."
+                )
+            
+            if response.status_code == 403:
+                raise VSATSyncError(
+                    f"Access denied to VSAT '{vsat_name}'. "
+                    f"Your GitLab token does not have permission to access this group/user. "
+                    f"Please check that your token has 'api' or 'read_api' scope and you are a member of this group."
+                )
             
             # If first page returns 404, it's not a group - try user namespace
             if response.status_code == 404 and page == 1:
@@ -766,17 +809,20 @@ def sync_vsat_services(
 def cleanup_orphaned_services(
     active_vsats: Set[str],
     sync_config: Dict[str, Any]
-) -> int:
+) -> Tuple[int, int]:
     """
-    Remove services from VSATs that are no longer in the config.
+    Mark services from removed VSATs as inactive (soft delete).
+    Also reactivate services if their VSAT is added back to config.
     
     Returns:
-        Number of services deleted
+        (deactivated_count, reactivated_count)
     """
     logger.info(f"\n🧹 Checking for orphaned services...")
     
-    all_services = get_all_services()
-    deleted_count = 0
+    # Get ALL services (including inactive ones)
+    all_services = get_all_services(active_only=False)
+    deactivated_count = 0
+    reactivated_count = 0
     
     services_by_vsat = {}
     for service in all_services:
@@ -785,31 +831,50 @@ def cleanup_orphaned_services(
             services_by_vsat[vsat] = []
         services_by_vsat[vsat].append(service)
     
+    # Check each VSAT
     for vsat, services in services_by_vsat.items():
         if vsat not in active_vsats:
-            logger.info(f"   🗑️  VSAT '{vsat}' removed from config")
-            
-            # Safety check
-            if len(services) > 10:
-                logger.warning(f"      ⚠️  Would delete {len(services)} services - requires manual confirmation")
-                continue
+            # VSAT removed from config - deactivate services (soft delete)
+            logger.info(f"   ⏸️  VSAT '{vsat}' removed from config - deactivating services")
             
             for service in services:
-                try:
-                    with get_db_connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("DELETE FROM services WHERE service_id = ?", (service['service_id'],))
-                    logger.info(f"      ❌ Deleted: {service['service_id']}")
-                    deleted_count += 1
-                except Exception as e:
-                    logger.error(f"      ❌ Failed to delete {service['service_id']}: {e}")
+                # Only deactivate if currently active
+                if service.get('is_active', 1) == 1:
+                    try:
+                        with get_db_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                "UPDATE services SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE service_id = ?",
+                                (service['service_id'],)
+                            )
+                        logger.info(f"      ⏸️  Deactivated: {service['service_id']}")
+                        deactivated_count += 1
+                    except Exception as e:
+                        logger.error(f"      ❌ Failed to deactivate {service['service_id']}: {e}")
+        else:
+            # VSAT is in config - reactivate any inactive services
+            for service in services:
+                if service.get('is_active', 1) == 0:
+                    try:
+                        with get_db_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                "UPDATE services SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE service_id = ?",
+                                (service['service_id'],)
+                            )
+                        logger.info(f"      ▶️  Reactivated: {service['service_id']}")
+                        reactivated_count += 1
+                    except Exception as e:
+                        logger.error(f"      ❌ Failed to reactivate {service['service_id']}: {e}")
     
-    if deleted_count > 0:
-        logger.info(f"   🗑️  Deleted {deleted_count} orphaned services")
-    else:
-        logger.info(f"   ✅ No orphaned services found")
+    if deactivated_count > 0:
+        logger.info(f"   ⏸️  Deactivated {deactivated_count} services (VSAT removed from config)")
+    if reactivated_count > 0:
+        logger.info(f"   ▶️  Reactivated {reactivated_count} services (VSAT added back to config)")
+    if deactivated_count == 0 and reactivated_count == 0:
+        logger.info(f"   ✅ No changes needed - all VSATs in sync")
     
-    return deleted_count
+    return (deactivated_count, reactivated_count)
 
 
 def run_sync(force: bool = False) -> Dict[str, Any]:
@@ -885,6 +950,16 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
         # Load config
         config = load_vsat_config()
         vsats = config.get('vsats', [])
+        
+        # Double-check vsats list is not empty (should be caught in load_vsat_config, but be safe)
+        if not vsats or len(vsats) == 0:
+            logger.warning("⚠️  No VSATs configured - nothing to sync")
+            return {
+                "status": "skipped",
+                "reason": "no_vsats_configured",
+                "message": "No VSATs found in master config. Add VSATs to config/vsat_master.yaml"
+            }
+        
         sync_config = config.get('sync_config', {})
         filters = config.get('filters', {})
         global_defaults = config.get('global_defaults', {})
@@ -915,8 +990,8 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
             total_unchanged += unchanged
             all_errors.extend(errors)
         
-        # Cleanup orphaned services
-        deleted = cleanup_orphaned_services(active_vsats, sync_config)
+        # Cleanup orphaned services (soft delete - mark as inactive)
+        deactivated, reactivated = cleanup_orphaned_services(active_vsats, sync_config)
         
         # Save config hash
         save_config_hash()
@@ -932,7 +1007,9 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
         logger.info(f"   ✅ Added: {total_added}")
         logger.info(f"   📝 Updated: {total_updated}")
         logger.info(f"   ➖ Unchanged: {total_unchanged}")
-        logger.info(f"   🗑️  Deleted: {deleted}")
+        logger.info(f"   ⏸️  Deactivated: {deactivated}")
+        if reactivated > 0:
+            logger.info(f"   ▶️  Reactivated: {reactivated}")
         if all_errors:
             logger.warning(f"   ❌ Errors: {len(all_errors)}")
         logger.info("="*80)
@@ -943,7 +1020,8 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
             "added": total_added,
             "updated": total_updated,
             "unchanged": total_unchanged,
-            "deleted": deleted,
+            "deactivated": deactivated,
+            "reactivated": reactivated,
             "errors": all_errors
         }
     
