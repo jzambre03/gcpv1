@@ -761,119 +761,233 @@
         const { old = null, new: newVal = null, remediation = {}, locator = {} } = item;
         const elements = [];
         
+        // Helper function to build YAML context with nested structure
+        const buildYamlContext = (value, isOld) => {
+          if (!locator || !locator.value) {
+            // No locator, just return the value
+            return isOld ? `- ${value}` : `+ ${value}`;
+          }
+          
+          // Extract the key path (already cleaned by LocationValueChip logic)
+          let keyPath = locator.value;
+          
+          // Remove file path prefix if present
+          const fileExtensions = ['.yml', '.yaml', '.json', '.properties', '.xml', '.toml', '.ini', '.conf', '.config'];
+          for (const ext of fileExtensions) {
+            const extIndex = keyPath.indexOf(ext + '.');
+            if (extIndex !== -1) {
+              keyPath = keyPath.substring(extIndex + ext.length + 1);
+              break;
+            }
+          }
+          
+          // Split the key path into parts (e.g., "t1.t2.t3" -> ["t1", "t2", "t3"])
+          const keys = keyPath.split('.');
+          
+          if (keys.length === 0) {
+            return isOld ? `- ${value}` : `+ ${value}`;
+          }
+          
+          // Build nested YAML structure
+          const lines = [];
+          const prefix = isOld ? '-' : '+';
+          const indent = '  '; // 2 spaces per level
+          
+          // Add each nested level
+          keys.forEach((key, index) => {
+            const currentIndent = indent.repeat(index);
+            lines.push(`${currentIndent}${key}:`);
+          });
+          
+          // Add the value with proper indentation and +/- prefix
+          const valueIndent = indent.repeat(keys.length);
+          lines.push(`${prefix} ${valueIndent}${value}`);
+          
+          return lines.join('\n');
+        };
+        
         const showSmartDiff = () => {
           const maskedOld = maskPII(String(old || ''));
           const maskedNew = maskPII(String(newVal || ''));
           
-          // Check if values are multi-line (contain newlines or are objects/arrays)
-          const isMultiLine = maskedOld.includes('\n') || maskedNew.includes('\n') || 
-                             maskedOld.length > 80 || maskedNew.length > 80;
-          
-          // Try to format JSON if it looks like JSON
-          const formatValue = (val) => {
-            try {
-              const parsed = JSON.parse(val);
-              return JSON.stringify(parsed, null, 2);
-            } catch {
-              return val;
+          // Check if we have a valid key path (for YAML context)
+          let hasValidKeyPath = false;
+          if (locator && locator.value) {
+            let keyPath = locator.value;
+            // Remove file path prefix if present
+            const fileExtensions = ['.yml', '.yaml', '.json', '.properties', '.xml', '.toml', '.ini', '.conf', '.config'];
+            for (const ext of fileExtensions) {
+              const extIndex = keyPath.indexOf(ext + '.');
+              if (extIndex !== -1) {
+                keyPath = keyPath.substring(extIndex + ext.length + 1);
+                break;
+              }
             }
-          };
+            // Check if we have a meaningful key path (contains dots or is a key name)
+            hasValidKeyPath = keyPath && keyPath.trim().length > 0;
+          }
           
-          const formattedOld = formatValue(maskedOld);
-          const formattedNew = formatValue(maskedNew);
-          
-          // Split into lines for multi-line display
-          const oldLines = formattedOld.split('\n');
-          const newLines = formattedNew.split('\n');
-          
-          if (isMultiLine || oldLines.length > 1 || newLines.length > 1) {
-            // Multi-line diff with scroll
-            return e('div', { key: 'change', style: {width: '100%', overflow: 'hidden'} }, [
-              locator.value && e('div', { style: {marginBottom: '8px', color: '#666', fontSize: '13px', fontWeight: '600'} }, 
-                `📍 Changed field: ${locator.value}`
-              ),
-              e('div', { 
-                className: 'diff-view mono',
+          // If no valid key path, show simple diff
+          if (!hasValidKeyPath) {
+            return e('div', { 
+              key: 'change', 
+              className: 'diff-view mono',
+              style: {
+                padding: '12px',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '6px',
+                border: '1px solid #dee2e6'
+              }
+            }, [
+              maskedOld && e('div', { 
+                key: 'old', 
+                className: 'diff-line del',
                 style: {
-                  maxHeight: '400px',
-                  maxWidth: '100%',
-                  overflowY: 'auto',
-                  overflowX: 'auto',
-                  border: '1px solid #e0e0e0',
-                  borderRadius: '6px',
-                  backgroundColor: '#f8f9fa',
-                  width: '100%'
+                  padding: '8px 12px',
+                  backgroundColor: '#ffebee',
+                  borderLeft: '4px solid #ef5350',
+                  borderRadius: '4px',
+                  marginBottom: '8px',
+                  color: '#b71c1c'
                 }
-              }, [
-                // Old value section
-                maskedOld && e('div', { key: 'old-section', style: {borderBottom: '1px solid #e0e0e0', minWidth: 'fit-content'} }, [
-                  e('div', { 
-                    style: {
-                      backgroundColor: '#ffebee', 
-                      padding: '4px 12px', 
-                      fontWeight: '600', 
-                      fontSize: '12px',
-                      color: '#c62828',
-                      borderBottom: '1px solid #ffcdd2',
-                      position: 'sticky',
-                      top: 0,
-                      zIndex: 1
-                    } 
-                  }, '− Old Value'),
-                  ...oldLines.map((line, i) => 
-                    e('div', { 
-                      key: `old-${i}`, 
-                      className: 'diff-line del',
-                      style: {
-                        padding: '4px 12px',
-                        borderLeft: '3px solid #ef5350',
-                        whiteSpace: 'pre',
-                        overflowWrap: 'normal',
-                        wordBreak: 'normal',
-                        minWidth: 'fit-content'
-                      }
-                    }, line || ' ')
-                  )
-                ]),
-                // New value section
-                maskedNew && e('div', { key: 'new-section', style: {minWidth: 'fit-content'} }, [
-                  e('div', { 
-                    style: {
-                      backgroundColor: '#e8f5e9', 
-                      padding: '4px 12px', 
-                      fontWeight: '600', 
-                      fontSize: '12px',
-                      color: '#2e7d32',
-                      borderBottom: '1px solid #c8e6c9',
-                      position: 'sticky',
-                      top: 0,
-                      zIndex: 1
-                    } 
-                  }, '+ New Value'),
-                  ...newLines.map((line, i) => 
-                    e('div', { 
-                      key: `new-${i}`, 
-                      className: 'diff-line add',
-                      style: {
-                        padding: '4px 12px',
-                        borderLeft: '3px solid #66bb6a',
-                        whiteSpace: 'pre',
-                        overflowWrap: 'normal',
-                        wordBreak: 'normal',
-                        minWidth: 'fit-content'
-                      }
-                    }, line || ' ')
-                  )
-                ])
-              ].filter(Boolean))
-            ]);
-          } else {
-            // Single-line compact diff
-            return e('div', { key: 'change', className: 'diff-view mono' }, [
-              maskedOld && e('div', { key: 'old', className: 'diff-line del' }, `- ${maskedOld}`),
-              maskedNew && e('div', { key: 'new', className: 'diff-line add' }, `+ ${maskedNew}`)
+              }, `- ${maskedOld}`),
+              maskedNew && e('div', { 
+                key: 'new', 
+                className: 'diff-line add',
+                style: {
+                  padding: '8px 12px',
+                  backgroundColor: '#e8f5e9',
+                  borderLeft: '4px solid #66bb6a',
+                  borderRadius: '4px',
+                  color: '#1b5e20'
+                }
+              }, `+ ${maskedNew}`)
             ].filter(Boolean));
           }
+          
+          // Build YAML context for old and new values
+          const oldWithContext = buildYamlContext(maskedOld, true);
+          const newWithContext = buildYamlContext(maskedNew, false);
+          
+          // Split into lines for display
+          const oldLines = oldWithContext.split('\n');
+          const newLines = newWithContext.split('\n');
+          
+          // Show with YAML context in a nice box
+          return e('div', { 
+            key: 'change',
+            style: {
+              width: '100%',
+              padding: '16px',
+              backgroundColor: '#fafafa',
+              borderRadius: '8px',
+              border: '2px solid #e0e0e0'
+            }
+          }, [
+            // Header with context indicator
+            e('div', {
+              style: {
+                backgroundColor: '#37474f',
+                color: '#ffffff',
+                padding: '8px 16px',
+                fontWeight: '600',
+                fontSize: '13px',
+                borderRadius: '6px 6px 0 0',
+                marginBottom: '8px'
+              }
+            }, '📝 Configuration Change with Full Context'),
+            
+            // YAML context box
+            e('div', {
+              key: 'yaml-context',
+              className: 'diff-view mono',
+              style: {
+                backgroundColor: '#ffffff',
+                border: '1px solid #d0d0d0',
+                borderRadius: '6px',
+                overflow: 'hidden',
+                maxHeight: '500px',
+                overflowY: 'auto'
+              }
+            }, [
+              // Old value section
+              maskedOld && e('div', { 
+                key: 'old-section',
+                style: {
+                  backgroundColor: '#ffebee',
+                  borderBottom: maskedNew ? '2px solid #ef9a9a' : 'none'
+                }
+              }, [
+                e('div', { 
+                  style: {
+                    backgroundColor: '#ffcdd2', 
+                    padding: '6px 16px', 
+                    fontWeight: '600', 
+                    fontSize: '12px',
+                    color: '#c62828',
+                    borderBottom: '1px solid #ef9a9a'
+                  } 
+                }, '− Old Value'),
+                ...oldLines.map((line, i) => {
+                  // Check if line starts with - (the value line with change marker)
+                  const isValueLine = line.trim().startsWith('- ');
+                  return e('div', { 
+                    key: `old-${i}`, 
+                    style: {
+                      padding: '6px 16px',
+                      paddingLeft: isValueLine ? '12px' : '16px',
+                      borderLeft: isValueLine ? '4px solid #ef5350' : 'none',
+                      backgroundColor: isValueLine ? '#ffcdd2' : 'transparent',
+                      whiteSpace: 'pre',
+                      fontFamily: 'Consolas, Monaco, monospace',
+                      fontSize: '13px',
+                      lineHeight: '1.6',
+                      color: isValueLine ? '#b71c1c' : '#424242',
+                      fontWeight: isValueLine ? '600' : 'normal'
+                    }
+                  }, line || ' ');
+                })
+              ]),
+              
+              // New value section
+              maskedNew && e('div', { 
+                key: 'new-section',
+                style: {
+                  backgroundColor: '#e8f5e9'
+                }
+              }, [
+                e('div', { 
+                  style: {
+                    backgroundColor: '#c8e6c9', 
+                    padding: '6px 16px', 
+                    fontWeight: '600', 
+                    fontSize: '12px',
+                    color: '#2e7d32',
+                    borderBottom: '1px solid #a5d6a7'
+                  } 
+                }, '+ New Value'),
+                ...newLines.map((line, i) => {
+                  // Check if line starts with + (the value line with change marker)
+                  const isValueLine = line.trim().startsWith('+ ');
+                  return e('div', { 
+                    key: `new-${i}`, 
+                    style: {
+                      padding: '6px 16px',
+                      paddingLeft: isValueLine ? '12px' : '16px',
+                      borderLeft: isValueLine ? '4px solid #66bb6a' : 'none',
+                      backgroundColor: isValueLine ? '#c8e6c9' : 'transparent',
+                      whiteSpace: 'pre',
+                      fontFamily: 'Consolas, Monaco, monospace',
+                      fontSize: '13px',
+                      lineHeight: '1.6',
+                      color: isValueLine ? '#1b5e20' : '#424242',
+                      fontWeight: isValueLine ? '600' : 'normal'
+                    }
+                  }, line || ' ');
+                })
+              ])
+            ].filter(Boolean))
+          ]);
         };
         
         if (old !== null || newVal !== null) {
