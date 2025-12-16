@@ -715,8 +715,24 @@
           if(!loc || !loc.value) return null;
           // Don't show for unidiff (already handled by Churn component)
           if (loc.type === 'unidiff') return null;
-          // Show the actual locator path (e.g., paymentgateway.clusterinfo.east)
-          return e('span', {className:'chip mono', style:{fontSize: '12px', color: '#666'}}, `📍 ${loc.value}`);
+          
+          // Extract just the key/tag part (remove file path prefix)
+          // e.g., "application.yml.server.port" -> "server.port"
+          let displayValue = loc.value;
+          
+          // Check if value contains a file extension followed by a dot (indicating file prefix)
+          const fileExtensions = ['.yml', '.yaml', '.json', '.properties', '.xml', '.toml', '.ini', '.conf', '.config'];
+          for (const ext of fileExtensions) {
+              const extIndex = displayValue.indexOf(ext + '.');
+              if (extIndex !== -1) {
+                  // Found file extension followed by a dot, extract everything after it
+                  displayValue = displayValue.substring(extIndex + ext.length + 1);
+                  break;
+              }
+          }
+          
+          // Show the key/tag path (e.g., server.port, paymentgateway.clusterinfo.east)
+          return e('span', {className:'chip mono', style:{fontSize: '12px', color: '#666'}}, `📍 ${displayValue}`);
       };
 
       const Churn = ({ loc }) => {
@@ -916,8 +932,8 @@
                         e('span', {className: 'chip'}, getChangeType(item)),
                         e(LocationValueChip, {loc: item.locator}),
                         e(Churn, {loc: item.locator}),
-                        itemContainsPII && e(PIINotice),
-                        e('span', {className: 'mono muted'}, item.file)
+                        itemContainsPII && e(PIINotice)
+                        // File path removed - already shown in file group header
                     ]),
                 ]),
                 e('button', {className: `toggle-btn ${open ? 'open': ''}`}, '+')
@@ -939,8 +955,8 @@
             e('p', {className: 'drift-title', style:{margin:0, flex: 1}}, item.rationale || item.why)
         ]),
         e('div', {className: 'issue-meta', style:{borderTop: '1px solid var(--line)', paddingTop: '8px'}}, [
-            e(LocatorPill, {loc: item.locator}),
-            e('span', {className: 'mono muted'}, item.file)
+            e(LocatorPill, {loc: item.locator})
+            // File path removed - already shown in file group header
         ])
       ]);
 
