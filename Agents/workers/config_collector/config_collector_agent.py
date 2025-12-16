@@ -33,7 +33,8 @@ from shared.config import Config
 from shared.git_operations import (
     setup_git_auth,
     generate_unique_branch_name,
-    create_config_only_branch
+    create_config_only_branch,
+    create_env_specific_config_branch
 )
 
 # Import golden branch tracker
@@ -952,11 +953,13 @@ Execute the workflow now.
                     "pom.xml", "build.gradle", "requirements.txt", "pyproject.toml", "go.mod"
                 ]
             
-            # Create config-only branch
-            success = create_config_only_branch(
+            # Create environment-specific config branch (filtered by environment)
+            # This ensures golden branches only contain files relevant to the target environment
+            success = create_env_specific_config_branch(
                 repo_url=repo_url,
                 main_branch=main_branch,
                 new_branch_name=golden_branch,
+                environment=environment,
                 config_paths=config_paths,
                 gitlab_token=os.getenv('GITLAB_TOKEN')
             )
@@ -1021,11 +1024,13 @@ Execute the workflow now.
                     "pom.xml", "build.gradle", "requirements.txt", "pyproject.toml", "go.mod"
                 ]
             
-            # Create config-only branch
-            success = create_config_only_branch(
+            # Create environment-specific config branch (filtered by environment)
+            # This ensures drift branches only contain files relevant to the target environment
+            success = create_env_specific_config_branch(
                 repo_url=repo_url,
                 main_branch=main_branch,
                 new_branch_name=drift_branch,
+                environment=environment,
                 config_paths=config_paths,
                 gitlab_token=os.getenv('GITLAB_TOKEN')
             )

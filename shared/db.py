@@ -675,6 +675,27 @@ def get_active_golden_branch(service_name: str, environment: str) -> Optional[st
         return row['branch_name'] if row else None
 
 
+def service_has_golden_branches(service_id: str) -> bool:
+    """
+    Check if a service has at least one golden branch.
+    Used to filter dashboard display - only show services with config files.
+    
+    Args:
+        service_id: Service identifier
+        
+    Returns:
+        True if service has at least one golden branch, False otherwise
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM golden_branches 
+            WHERE service_name = ? AND branch_type = 'golden'
+        """, (service_id,))
+        count = cursor.fetchone()['count']
+        return count > 0
+
+
 def deactivate_branches(service_name: str, environment: str, branch_type: str) -> None:
     """Deactivate all branches of a type for service/environment."""
     with get_db_connection() as conn:
@@ -955,24 +976,39 @@ def add_service(
         logger.info(f"✅ Added/updated service: {service_id} (VSAT: {vsat})")
 
 
-def get_all_services(active_only: bool = True) -> List[Dict[str, Any]]:
+def get_all_services(active_only: bool = True, with_branches_only: bool = False) -> List[Dict[str, Any]]:
     """
     Get all services from database.
     
     Args:
         active_only: If True, only return active services
+        with_branches_only: If True, only return services that have golden branches
         
     Returns:
         List of service dictionaries
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        if active_only:
-            cursor.execute("""
-                SELECT * FROM services WHERE is_active = 1 ORDER BY service_id
-            """)
+        
+        if with_branches_only:
+            # Join with golden_branches to only get services with branches
+            query = """
+                SELECT DISTINCT s.* FROM services s
+                INNER JOIN golden_branches gb ON s.service_id = gb.service_name
+                WHERE gb.branch_type = 'golden'
+            """
+            if active_only:
+                query += " AND s.is_active = 1"
+            query += " ORDER BY s.service_id"
+            cursor.execute(query)
         else:
-            cursor.execute("SELECT * FROM services ORDER BY service_id")
+            # Standard query
+            if active_only:
+                cursor.execute("""
+                    SELECT * FROM services WHERE is_active = 1 ORDER BY service_id
+                """)
+            else:
+                cursor.execute("SELECT * FROM services ORDER BY service_id")
         
         rows = cursor.fetchall()
         services = []

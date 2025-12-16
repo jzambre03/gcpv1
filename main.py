@@ -115,9 +115,13 @@ DEFAULT_CONFIG_PATHS = [
 # ============================================================================
 
 def load_services_from_db() -> Dict[str, Any]:
-    """Load services configuration from database."""
+    """
+    Load services configuration from database.
+    Only loads services that have golden branches (i.e., services with config files).
+    """
     try:
-        services_list = get_all_services(active_only=True)
+        # Only load services with golden branches (filters out services without config files)
+        services_list = get_all_services(active_only=True, with_branches_only=True)
         services_dict = {}
         
         for service in services_list:
@@ -143,19 +147,22 @@ def initialize_services_display():
     """
     Display services loaded from database.
     Services are managed via VSAT Master Config system.
+    Only shows services with golden branches (services with config files).
     """
     try:
-        services_list = get_all_services(active_only=True)
+        # Only show services with golden branches
+        services_list = get_all_services(active_only=True, with_branches_only=True)
         
         if not services_list:
-            logger.info("ℹ️  No services in database")
+            logger.info("ℹ️  No services with golden branches in database")
             logger.info("💡 To add services:")
             logger.info("   1. Add VSATs to config/vsat_master.yaml")
             logger.info("   2. Services will be automatically synced from GitLab")
             logger.info("   3. Or use: python scripts/migrate_add_services_table.py")
+            logger.info("   ⚠️  Note: Services without config files are stored but not displayed")
             return
         
-        print(f"🏢 Services Loaded from Database:")
+        print(f"🏢 Services Loaded from Database (with config files):")
         for service in services_list:
             print(f"   {service['service_id']}: {service['service_name']}")
             print(f"      Repo: {service['repo_url']}")
@@ -1211,7 +1218,7 @@ async def set_golden_branch(service_id: str, environment: str, branch_name: Opti
         from shared.golden_branch_tracker import add_golden_branch
         from shared.git_operations import (
             generate_unique_branch_name, 
-            create_config_only_branch,  # NEW: Config-only branch creation
+            create_env_specific_config_branch,  # Environment-specific filtering
             check_branch_exists
         )
         
@@ -1219,12 +1226,13 @@ async def set_golden_branch(service_id: str, environment: str, branch_name: Opti
         if not branch_name:
             branch_name = generate_unique_branch_name("golden", environment)
             
-            # Create config-only branch from main (FAST - only config files)
+            # Create environment-specific config branch (filtered by environment)
             config_paths = config.get("config_paths", DEFAULT_CONFIG_PATHS)
-            success = create_config_only_branch(
+            success = create_env_specific_config_branch(
                 repo_url=config["repo_url"],
                 main_branch=config["main_branch"],
                 new_branch_name=branch_name,
+                environment=environment,
                 config_paths=config_paths,
                 gitlab_token=os.getenv('GITLAB_TOKEN')
             )
