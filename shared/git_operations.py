@@ -19,6 +19,7 @@ import git
 from git.exc import GitCommandError
 
 from .env_filter import filter_files_for_environment, log_environment_distribution
+from .config import get_temp_base_dir
 
 # Configure logging to show in terminal
 logging.basicConfig(
@@ -114,7 +115,7 @@ def check_branch_exists(repo_url: str, branch_name: str, gitlab_token: Optional[
     temp_dir = None
     try:
         # Create temporary directory for checking
-        temp_dir = tempfile.mkdtemp(prefix="git_check_")
+        temp_dir = str(get_temp_base_dir() / f"git_check_{uuid.uuid4().hex[:8]}")
         
         # Setup authentication
         auth_url = setup_git_auth(repo_url, gitlab_token)
@@ -180,7 +181,8 @@ def create_branch_from_main(
     temp_dir = None
     try:
         # Create temporary directory
-        temp_dir = tempfile.mkdtemp(prefix="git_branch_create_")
+        temp_dir = str(get_temp_base_dir() / f"git_branch_create_{uuid.uuid4().hex[:8]}")
+        Path(temp_dir).mkdir(parents=True, exist_ok=True)
         logger.info(f"Creating branch {new_branch_name} from {main_branch} in temp dir: {temp_dir}")
         
         # Setup authentication
@@ -242,7 +244,8 @@ def create_config_only_branch(
     temp_dir = None
     try:
         # Create temporary directory
-        temp_dir = tempfile.mkdtemp(prefix="git_config_branch_")
+        temp_dir = str(get_temp_base_dir() / f"git_config_branch_{uuid.uuid4().hex[:8]}")
+        Path(temp_dir).mkdir(parents=True, exist_ok=True)
         log_and_print(f"🌿 Creating config-only branch: {new_branch_name}")
         log_and_print(f"🎯 Source branch: {main_branch}")
         
@@ -449,7 +452,8 @@ def create_env_specific_config_branch(
     """
     temp_dir = None
     try:
-        temp_dir = tempfile.mkdtemp(prefix=f"git_{environment}_config_")
+        temp_dir = str(get_temp_base_dir() / f"git_{environment}_config_{uuid.uuid4().hex[:8]}")
+        Path(temp_dir).mkdir(parents=True, exist_ok=True)
         log_and_print(f"🌿 Creating environment-specific config branch: {new_branch_name}")
         log_and_print(f"🎯 Environment: {environment}")
         log_and_print(f"🎯 Source branch: {main_branch}")
@@ -643,12 +647,14 @@ def create_selective_golden_branch(
         
         # Step 1: Clone old golden branch as base
         log_and_print(f"📥 Cloning old golden branch as base...")
-        temp_golden_dir = tempfile.mkdtemp(prefix="golden_base_")
+        temp_golden_dir = str(get_temp_base_dir() / f"golden_base_{uuid.uuid4().hex[:8]}")
+        Path(temp_golden_dir).mkdir(parents=True, exist_ok=True)
         golden_repo = git.Repo.clone_from(auth_url, temp_golden_dir, branch=old_golden_branch, depth=1)
         
         # Step 2: Clone drift branch to get new files
         log_and_print(f"📥 Cloning drift branch to get approved files...")
-        temp_drift_dir = tempfile.mkdtemp(prefix="drift_source_")
+        temp_drift_dir = str(get_temp_base_dir() / f"drift_source_{uuid.uuid4().hex[:8]}")
+        Path(temp_drift_dir).mkdir(parents=True, exist_ok=True)
         drift_repo = git.Repo.clone_from(auth_url, temp_drift_dir, branch=drift_branch, depth=1)
         
         # Step 3: Copy approved files from drift to golden
@@ -747,7 +753,8 @@ def list_branches_by_pattern(
     temp_dir = None
     try:
         # Create temporary directory
-        temp_dir = tempfile.mkdtemp(prefix="git_list_")
+        temp_dir = str(get_temp_base_dir() / f"git_list_{uuid.uuid4().hex[:8]}")
+        Path(temp_dir).mkdir(parents=True, exist_ok=True)
         
         # Setup authentication
         auth_url = setup_git_auth(repo_url, gitlab_token)
@@ -800,7 +807,8 @@ def delete_remote_branch(
     temp_dir = None
     try:
         # Create temporary directory
-        temp_dir = tempfile.mkdtemp(prefix="git_delete_")
+        temp_dir = str(get_temp_base_dir() / f"git_delete_{uuid.uuid4().hex[:8]}")
+        Path(temp_dir).mkdir(parents=True, exist_ok=True)
         
         # Setup authentication
         auth_url = setup_git_auth(repo_url, gitlab_token)

@@ -27,7 +27,7 @@ from strands import Agent
 from strands.models.bedrock import BedrockModel
 from strands.tools import tool
 
-from shared.config import Config
+from shared.config import Config, get_temp_base_dir
 from shared.models import TaskRequest, TaskResponse
 from shared.db import save_context_bundle, save_config_delta
 
@@ -767,8 +767,9 @@ Execute the analysis now.
             # Note: We use a temp directory for emit_context_bundle (it writes a file as side effect)
             # but we only use the returned bundle_data dict for DB storage
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            import tempfile
-            output_dir = Path(tempfile.mkdtemp(prefix=f"bundle_{timestamp}_"))
+            import uuid
+            output_dir = get_temp_base_dir() / f"bundle_{timestamp}_{uuid.uuid4().hex[:8]}"
+            output_dir.mkdir(parents=True, exist_ok=True)
             
             # Build overview
             config_golden_files = [f for f in golden_files if is_config_file(f.get("name", f.get("path", "")))]
@@ -1122,11 +1123,12 @@ Execute the analysis now.
         logger.info("Generating context bundle data...")
         
         try:
-            import tempfile
+            import uuid
             import shutil
             
             # Use temp directory (emit_context_bundle writes file as side effect)
-            output_path = Path(tempfile.mkdtemp(prefix="bundle_"))
+            output_path = get_temp_base_dir() / f"bundle_{uuid.uuid4().hex[:8]}"
+            output_path.mkdir(parents=True, exist_ok=True)
             golden_temp = Path(golden_path)
             drift_temp = Path(drift_path)
             

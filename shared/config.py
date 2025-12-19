@@ -1,8 +1,13 @@
 """Configuration management for the Golden Config AI system."""
 
 import os
+import tempfile
+import logging
 from typing import Optional
 from dataclasses import dataclass
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Configuration file patterns for sparse checkout
 CONFIG_FILE_PATTERNS = [
@@ -11,6 +16,56 @@ CONFIG_FILE_PATTERNS = [
     "Dockerfile", "docker-compose.yml",
     "pom.xml", "build.gradle", "requirements.txt"
 ]
+
+# Project root and temp directory configuration
+PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_TEMP_DIR = PROJECT_ROOT / "temp"
+
+
+def get_temp_base_dir() -> Path:
+    """
+    Get the base temporary directory for all operations.
+    
+    This function provides intelligent temp directory selection with 3-tier priority:
+    1. GCP_TEMP_DIR environment variable (if set by user)
+    2. Project temp directory (./temp in project root) - DEFAULT
+    3. System temp directory (fallback if project dir not writable)
+    
+    This ensures temp files are created in the same filesystem as the application,
+    which is critical for EC2 instances where /tmp might have limited space.
+    
+    Returns:
+        Path object pointing to the temp base directory
+    
+    Examples:
+        >>> # On EC2: /app/saja9l7/gcpv1/temp/
+        >>> # On Local: /Users/user/project/temp/
+        >>> temp_dir = get_temp_base_dir()
+    """
+    # Priority 1: Check environment variable
+    env_temp = os.getenv('GCP_TEMP_DIR')
+    if env_temp:
+        temp_base = Path(env_temp)
+        logger.info(f"Using temp directory from GCP_TEMP_DIR: {temp_base}")
+        temp_base.mkdir(parents=True, exist_ok=True)
+        return temp_base
+    
+    # Priority 2: Use project temp directory
+    try:
+        PROJECT_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+        # Test if we can write to it
+        test_file = PROJECT_TEMP_DIR / ".write_test"
+        test_file.touch()
+        test_file.unlink()
+        logger.debug(f"Using project temp directory: {PROJECT_TEMP_DIR}")
+        return PROJECT_TEMP_DIR
+    except (PermissionError, OSError) as e:
+        logger.warning(f"Cannot use project temp directory: {e}")
+    
+    # Priority 3: Fallback to system temp directory
+    system_temp = Path(tempfile.gettempdir())
+    logger.info(f"Using system temp directory (fallback): {system_temp}")
+    return system_temp
 
 
 @dataclass

@@ -27,7 +27,7 @@ from strands.models.bedrock import BedrockModel
 from strands.tools import tool
 from dotenv import load_dotenv
 from shared.models import TaskResponse, TaskRequest
-from shared.config import Config
+from shared.config import Config, get_temp_base_dir
 
 # Import Git operations from shared
 from shared.git_operations import (
@@ -851,7 +851,7 @@ Execute the workflow now.
         try:
             if not temp_dir:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                temp_dir = str(Path(tempfile.gettempdir()) / f"config_collector_{timestamp}_{branch}")
+                temp_dir = str(get_temp_base_dir() / f"config_collector_{timestamp}_{branch}")
             
             repo_path = Path(temp_dir)
             repo = ensure_repo_ready(repo_url, repo_path)
@@ -1170,7 +1170,7 @@ Execute the workflow now.
             logger.info("\n📥 Step 3: Cloning branches to temporary locations...")
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            base_temp = Path(tempfile.gettempdir()) / "config_collector" / f"{service_id}_{environment}_{timestamp}"
+            base_temp = get_temp_base_dir() / "config_collector" / f"{service_id}_{environment}_{timestamp}"
             base_temp.mkdir(parents=True, exist_ok=True)
             
             golden_temp = base_temp / "golden"
@@ -1279,7 +1279,7 @@ Execute the workflow now.
             
             # Clone drift branch temporarily
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            temp_dir = Path(tempfile.gettempdir()) / f"certify_{timestamp}"
+            temp_dir = get_temp_base_dir() / f"certify_{timestamp}"
             temp_dir.mkdir(parents=True, exist_ok=True)
             
             try:

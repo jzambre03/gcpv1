@@ -164,3 +164,6 @@ test.txt
 
 # VSAT Sync Logs
 logs/vsat_sync/
+
+# Temporary files directory (Config Collector clones)
+temp/
