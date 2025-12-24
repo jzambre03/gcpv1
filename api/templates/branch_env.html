@@ -335,7 +335,7 @@
           activeTab === 'overview' && e(OverviewTab, {issueData, onStagingClick: handleStagingClick, serviceConfig, serviceId, certificationUpdateTrigger}),
           activeTab === 'certifications' && e(CertificationsTab, {issueData, onStagingClick: handleStagingClick, onRecertifyClick: handleRecertifyClick, serviceConfig, serviceId, onCertificationUpdate: triggerCertificationUpdate}),
           activeTab === 'deployment' && e(DeploymentTab, {serviceId, currentEnvironment: currentEnvironmentForAnalysis, triggerAnalysis, runId, persistedDriftData, setPersistedDriftData, persistedHasRunAnalysis, setPersistedHasRunAnalysis, serviceConfig}),
-          activeTab === 'history' && e(HistoryTab, {serviceId, currentEnvironment: 'prod'}),
+          activeTab === 'history' && e(HistoryTab, {serviceId, currentEnvironment: currentEnvironmentForAnalysis, serviceConfig}),
           
           // Staging Modal
           showStagingModal && e(StagingModal, {
@@ -2170,11 +2170,14 @@
         ]);
       }
       
-      function HistoryTab({serviceId, currentEnvironment}) {
+      function HistoryTab({serviceId, currentEnvironment, serviceConfig}) {
         const [runHistory, setRunHistory] = React.useState([]);
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState(null);
         const [selectedEnv, setSelectedEnv] = React.useState(currentEnvironment || 'prod');
+        
+        // Get available environments from service config
+        const availableEnvironments = serviceConfig?.environments || ['prod', 'dev', 'qa', 'staging', 'alpha', 'beta1', 'beta2'];
         
         // Load run history from API
         React.useEffect(() => {
@@ -2298,8 +2301,22 @@
         return e('div', {className: 'card'}, [
           e('div', {style: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px'}}, [
             e('h3', {style: {margin: '0'}}, `Analysis History (${runHistory.length} runs)`),
-            e('div', {style: {fontSize: '14px', color: 'var(--muted)'}}, 
-              `Environment: ${selectedEnv.toUpperCase()}`)
+            e('div', {style: {display: 'flex', alignItems: 'center', gap: '12px'}}, [
+              e('label', {style: {fontSize: '14px', fontWeight: '500', color: 'var(--muted)'}}, 'Environment:'),
+              e('select', {
+                value: selectedEnv,
+                onChange: (e) => setSelectedEnv(e.target.value),
+                style: {
+                  padding: '6px 12px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  fontSize: '14px',
+                  cursor: 'pointer'
+                }
+              }, availableEnvironments.map(env => 
+                e('option', {key: env, value: env}, env.toUpperCase())
+              ))
+            ])
           ]),
           
           // Run list
