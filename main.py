@@ -1512,12 +1512,65 @@ async def get_run_history(service_id: str, environment: str):
         logger.info(f"   Total runs in database: {len(all_runs)}")
         
         # Filter by service and environment
-        filtered_runs = [
-            run for run in all_runs
-            if run.get('service_name') == service_id and run.get('environment') == environment
-        ]
+        # NOTE: Handle VSAT prefix mismatches (e.g., "saja9l7_cxp-ptg-adapter" vs "cxp-ptg-adapter")
+        filtered_runs = []
+        for run in all_runs:
+            run_service = run.get('service_name', '')
+            run_env = run.get('environment', '')
+            
+            # Log each run for debugging
+            logger.debug(f"      Checking run: service_name='{run_service}', env='{run_env}'")
+            
+            # Skip if environment doesn't match
+            if run_env != environment:
+                continue
+            
+            matched = False
+            match_type = None
+            
+            # 1. Exact match
+            if run_service == service_id:
+                matched = True
+                match_type = "exact"
+            
+            # 2. Run has VSAT prefix: "vsat_serviceid" matches "serviceid"
+            # Example: run="saja9l7_cxp-ptg-adapter", service_id="cxp-ptg-adapter"
+            elif '_' in run_service:
+                # Try removing prefix from run_service
+                parts = run_service.split('_', 1)  # Split only on first underscore
+                if len(parts) == 2:
+                    prefix, service_part = parts
+                    if service_part == service_id:
+                        matched = True
+                        match_type = f"prefix-removed (prefix='{prefix}')"
+                    # Also try with multiple underscores (e.g., "EV6V_CXP_serviceid")
+                    elif '_' in service_part:
+                        # Try one more level
+                        sub_parts = service_part.split('_', 1)
+                        if len(sub_parts) == 2 and sub_parts[1] == service_id:
+                            matched = True
+                            match_type = f"double-prefix-removed (prefix='{prefix}_{sub_parts[0]}')"
+            
+            # 3. Service_id has VSAT prefix: "vsat_serviceid" vs run="serviceid"
+            # Example: service_id="saja9l7_cxp-ptg-adapter", run="cxp-ptg-adapter"
+            elif '_' in service_id:
+                parts = service_id.split('_', 1)
+                if len(parts) == 2:
+                    prefix, service_part = parts
+                    if service_part == run_service:
+                        matched = True
+                        match_type = f"ui-prefix-removed (prefix='{prefix}')"
+            
+            if matched:
+                filtered_runs.append(run)
+                logger.info(f"         ✅ MATCHED ({match_type})")
         
         logger.info(f"   Filtered runs for {service_id}/{environment}: {len(filtered_runs)}")
+        
+        # Also log all unique service names for debugging
+        unique_service_names = set(run.get('service_name', '') for run in all_runs)
+        logger.info(f"   Unique service names in database: {list(unique_service_names)}")
+        logger.info(f"   Looking for service_id: '{service_id}'")
         
         if filtered_runs:
             logger.info(f"   Sample run IDs: {[r['run_id'] for r in filtered_runs[:3]]}")
