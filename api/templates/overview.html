@@ -80,51 +80,139 @@
     
     /* VSAT Filter */
     .vsat-filter {
-      background: white;
-      border: 1px solid #e0e0e0;
-      border-radius: 8px;
-      padding: 20px;
+      position: relative;
       margin-bottom: 24px;
+    }
+    
+    .vsat-filter-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      background: white;
+      border: 1px solid #d0d0d0;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #333;
+      cursor: pointer;
+      transition: all 0.15s;
       box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
     
-    .vsat-filter-label {
-      font-size: 14px;
+    .vsat-filter-button:hover {
+      border-color: #999;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .vsat-filter-button-icon {
+      font-size: 16px;
+    }
+    
+    .vsat-filter-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 6px;
+      background: #1a1a1a;
+      color: white;
+      border-radius: 10px;
+      font-size: 11px;
       font-weight: 600;
-      color: #666;
-      margin-bottom: 12px;
+    }
+    
+    .vsat-dropdown {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 0;
+      min-width: 300px;
+      background: white;
+      border: 1px solid #d0d0d0;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      z-index: 1000;
+      display: none;
+    }
+    
+    .vsat-dropdown.open {
       display: block;
     }
     
-    .vsat-select {
-      width: 100%;
-      padding: 10px 12px;
-      border: 1px solid #d0d0d0;
-      border-radius: 4px;
+    .vsat-dropdown-header {
+      padding: 16px;
+      border-bottom: 1px solid #e0e0e0;
       font-size: 14px;
-      background: white;
-      min-height: 120px;
+      font-weight: 600;
+      color: #333;
+    }
+    
+    .vsat-dropdown-list {
+      max-height: 300px;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+    
+    .vsat-dropdown-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 16px;
       cursor: pointer;
+      transition: background 0.15s;
     }
     
-    .vsat-select:focus {
-      outline: none;
-      border-color: #666;
+    .vsat-dropdown-item:hover {
+      background: #f5f5f5;
     }
     
-    .vsat-select option {
-      padding: 8px;
+    .vsat-checkbox {
+      width: 18px;
+      height: 18px;
+      margin-right: 12px;
+      cursor: pointer;
+      accent-color: #1a1a1a;
     }
     
-    .vsat-select option:checked {
+    .vsat-dropdown-label {
+      font-size: 14px;
+      color: #333;
+      cursor: pointer;
+      flex: 1;
+    }
+    
+    .vsat-dropdown-footer {
+      padding: 12px 16px;
+      border-top: 1px solid #e0e0e0;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    
+    .vsat-btn {
+      padding: 8px 16px;
+      border: 1px solid #d0d0d0;
+      background: white;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    
+    .vsat-btn:hover {
+      background: #f5f5f5;
+    }
+    
+    .vsat-btn.primary {
       background: #1a1a1a;
       color: white;
+      border-color: #1a1a1a;
     }
     
-    .vsat-filter-hint {
-      font-size: 12px;
-      color: #999;
-      margin-top: 8px;
+    .vsat-btn.primary:hover {
+      background: #333;
+      border-color: #333;
     }
     
     /* KPI Cards */
@@ -412,12 +500,15 @@
         width: 100%;
       }
       
-      .vsat-filter {
-        padding: 16px;
+      .vsat-dropdown {
+        left: 0;
+        right: 0;
+        min-width: auto;
       }
       
-      .vsat-select {
-        min-height: 100px;
+      .vsat-filter-button {
+        width: 100%;
+        justify-content: space-between;
       }
       
       .kpi-grid {
@@ -639,6 +730,8 @@
         const [analyzingId, setAnalyzingId] = React.useState(null);
         const [availableVsats, setAvailableVsats] = React.useState([]);
         const [selectedVsats, setSelectedVsats] = React.useState([]);
+        const [tempSelectedVsats, setTempSelectedVsats] = React.useState([]);
+        const [isDropdownOpen, setIsDropdownOpen] = React.useState(false);
         const [kpis, setKpis] = React.useState({
           totalServices: 0,
           activeIssues: 0
@@ -700,12 +793,49 @@
           }
         }, []);
         
-        // Handle VSAT filter change
-        const handleVsatChange = React.useCallback((e) => {
-          const selected = Array.from(e.target.selectedOptions, option => option.value);
-          setSelectedVsats(selected);
-          loadServices(selected);
-        }, [loadServices]);
+        // Toggle dropdown
+        const toggleDropdown = React.useCallback(() => {
+          if (!isDropdownOpen) {
+            setTempSelectedVsats([...selectedVsats]);
+          }
+          setIsDropdownOpen(!isDropdownOpen);
+        }, [isDropdownOpen, selectedVsats]);
+        
+        // Handle checkbox change
+        const handleCheckboxChange = React.useCallback((vsat) => {
+          setTempSelectedVsats(prev => {
+            if (prev.includes(vsat)) {
+              return prev.filter(v => v !== vsat);
+            } else {
+              return [...prev, vsat];
+            }
+          });
+        }, []);
+        
+        // Apply filter
+        const applyFilter = React.useCallback(() => {
+          setSelectedVsats([...tempSelectedVsats]);
+          loadServices(tempSelectedVsats);
+          setIsDropdownOpen(false);
+        }, [tempSelectedVsats, loadServices]);
+        
+        // Cancel filter
+        const cancelFilter = React.useCallback(() => {
+          setTempSelectedVsats([...selectedVsats]);
+          setIsDropdownOpen(false);
+        }, [selectedVsats]);
+        
+        // Close dropdown when clicking outside
+        React.useEffect(() => {
+          const handleClickOutside = (event) => {
+            if (isDropdownOpen && !event.target.closest('.vsat-filter')) {
+              cancelFilter();
+            }
+          };
+          
+          document.addEventListener('mousedown', handleClickOutside);
+          return () => document.removeEventListener('mousedown', handleClickOutside);
+        }, [isDropdownOpen, cancelFilter]);
         
         // Load on mount and set auto-refresh
         React.useEffect(() => {
@@ -751,22 +881,69 @@
           e('div', {key: 'container', className: 'container'}, [
             // VSAT Filter
             availableVsats.length > 0 && e('div', {key: 'vsat-filter', className: 'vsat-filter'}, [
-              e('label', {key: 'label', className: 'vsat-filter-label', htmlFor: 'vsat-select'}, 
-                'Filter by VSAT' + (selectedVsats.length > 0 ? ` (${selectedVsats.length} selected)` : ' (All)')
-              ),
-              e('select', {
-                key: 'select',
-                id: 'vsat-select',
-                className: 'vsat-select',
-                multiple: true,
-                value: selectedVsats,
-                onChange: handleVsatChange
-              }, availableVsats.map(vsat => 
-                e('option', {key: vsat, value: vsat}, vsat)
-              )),
-              e('div', {key: 'hint', className: 'vsat-filter-hint'}, 
-                'Hold Ctrl (Cmd on Mac) to select multiple VSATs. Leave empty to show all services.'
-              )
+              // Filter Button
+              e('button', {
+                key: 'button',
+                className: 'vsat-filter-button',
+                onClick: toggleDropdown
+              }, [
+                e('span', {key: 'icon', className: 'vsat-filter-button-icon'}, '🔍'),
+                e('span', {key: 'text'}, 
+                  selectedVsats.length > 0 
+                    ? `Filter by VSAT (${selectedVsats.length})` 
+                    : 'Filter by VSAT (All)'
+                ),
+                selectedVsats.length > 0 && e('span', {
+                  key: 'badge',
+                  className: 'vsat-filter-badge'
+                }, selectedVsats.length)
+              ]),
+              
+              // Dropdown Panel
+              e('div', {
+                key: 'dropdown',
+                className: 'vsat-dropdown' + (isDropdownOpen ? ' open' : '')
+              }, [
+                // Header
+                e('div', {key: 'header', className: 'vsat-dropdown-header'}, 'Select VSATs'),
+                
+                // List
+                e('div', {key: 'list', className: 'vsat-dropdown-list'}, 
+                  availableVsats.map(vsat => 
+                    e('div', {
+                      key: vsat,
+                      className: 'vsat-dropdown-item',
+                      onClick: () => handleCheckboxChange(vsat)
+                    }, [
+                      e('input', {
+                        key: 'checkbox',
+                        type: 'checkbox',
+                        className: 'vsat-checkbox',
+                        checked: tempSelectedVsats.includes(vsat),
+                        onChange: () => handleCheckboxChange(vsat)
+                      }),
+                      e('label', {
+                        key: 'label',
+                        className: 'vsat-dropdown-label'
+                      }, vsat)
+                    ])
+                  )
+                ),
+                
+                // Footer
+                e('div', {key: 'footer', className: 'vsat-dropdown-footer'}, [
+                  e('button', {
+                    key: 'cancel',
+                    className: 'vsat-btn',
+                    onClick: cancelFilter
+                  }, 'Cancel'),
+                  e('button', {
+                    key: 'apply',
+                    className: 'vsat-btn primary',
+                    onClick: applyFilter
+                  }, 'Apply')
+                ])
+              ])
             ]),
             
             // KPIs
