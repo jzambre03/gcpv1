@@ -2177,15 +2177,7 @@
         const [allRunHistory, setAllRunHistory] = React.useState([]);  // ✅ Store ALL runs
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState(null);
-        const [selectedEnv, setSelectedEnv] = React.useState(currentEnvironment || 'prod');
-        
-        // ✅ Update selectedEnv when currentEnvironment changes
-        React.useEffect(() => {
-          if (currentEnvironment && currentEnvironment !== selectedEnv) {
-            console.log(`📊 HistoryTab: Updating selectedEnv from '${selectedEnv}' to '${currentEnvironment}'`);
-            setSelectedEnv(currentEnvironment);
-          }
-        }, [currentEnvironment]);
+        const [selectedEnv, setSelectedEnv] = React.useState('all');  // ✅ Default to 'all' to show all runs
         
         // Get available environments from service config
         const availableEnvironments = serviceConfig?.environments || ['prod', 'dev', 'qa', 'staging', 'alpha', 'beta1', 'beta2'];
