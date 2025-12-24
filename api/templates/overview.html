@@ -723,7 +723,7 @@
       
       // Main App Component
       function App() {
-        const [services, setServices] = React.useState([]);
+        const [allServices, setAllServices] = React.useState([]);
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState(null);
         const [searchTerm, setSearchTerm] = React.useState('');
@@ -732,42 +732,43 @@
         const [selectedVsats, setSelectedVsats] = React.useState([]);
         const [tempSelectedVsats, setTempSelectedVsats] = React.useState([]);
         const [isDropdownOpen, setIsDropdownOpen] = React.useState(false);
-        const [kpis, setKpis] = React.useState({
-          totalServices: 0,
-          activeIssues: 0
-        });
         
-        // Load services
-        const loadServices = React.useCallback(async (vsatFilter) => {
+        // Load services (no VSAT filtering on backend)
+        const loadServices = React.useCallback(async () => {
           try {
-            let url = '/api/services';
-            if (vsatFilter && vsatFilter.length > 0) {
-              url += '?vsat=' + encodeURIComponent(vsatFilter.join(','));
-            }
-            
-            const response = await fetch(url);
+            const response = await fetch('/api/services');
             const data = await response.json();
             
             if (!response.ok) {
               throw new Error(data.detail || 'Failed to load services');
             }
             
-            setServices(data.services || []);
+            setAllServices(data.services || []);
             setAvailableVsats(data.available_vsats || []);
-            
-            // Calculate KPIs from filtered services
-            const filteredServices = data.services || [];
-            setKpis({
-              totalServices: filteredServices.length,
-              activeIssues: filteredServices.reduce((sum, s) => sum + (s.issues || 0), 0)
-            });
-            
             setLoading(false);
           } catch (err) {
             setError(err.message);
             setLoading(false);
           }
         }, []);
+        
+        // Client-side filtered services (by VSAT)
+        const filteredServicesByVsat = React.useMemo(() => {
+          if (selectedVsats.length === 0) {
+            return allServices;
+          }
+          return allServices.filter(service => 
+            selectedVsats.includes(service.vsat)
+          );
+        }, [allServices, selectedVsats]);
+        
+        // Calculate KPIs from filtered services
+        const kpis = React.useMemo(() => {
+          return {
+            totalServices: filteredServicesByVsat.length,
+            activeIssues: filteredServicesByVsat.reduce((sum, s) => sum + (s.issues || 0), 0)
+          };
+        }, [filteredServicesByVsat]);
         
         // Analyze service
         const analyzeService = React.useCallback(async (serviceId) => {
@@ -812,12 +813,11 @@
           });
         }, []);
         
-        // Apply filter
+        // Apply filter (instant - no API call)
         const applyFilter = React.useCallback(() => {
           setSelectedVsats([...tempSelectedVsats]);
-          loadServices(tempSelectedVsats);
           setIsDropdownOpen(false);
-        }, [tempSelectedVsats, loadServices]);
+        }, [tempSelectedVsats]);
         
         // Cancel filter
         const cancelFilter = React.useCallback(() => {
@@ -839,20 +839,20 @@
         
         // Load on mount and set auto-refresh
         React.useEffect(() => {
-          loadServices([]);
-          const interval = setInterval(() => loadServices(selectedVsats), 30000);
+          loadServices();
+          const interval = setInterval(loadServices, 30000);
           return () => clearInterval(interval);
-        }, [loadServices, selectedVsats]);
+        }, [loadServices]);
         
-        // Filter services by search term (VSAT filtering is done server-side)
+        // Filter services by search term (on top of VSAT filtering)
         const filteredServices = React.useMemo(() => {
-          if (!searchTerm) return services;
+          if (!searchTerm) return filteredServicesByVsat;
           const term = searchTerm.toLowerCase();
-          return services.filter(s => 
+          return filteredServicesByVsat.filter(s => 
             s.name.toLowerCase().includes(term) || 
             s.id.toLowerCase().includes(term)
           );
-        }, [services, searchTerm]);
+        }, [filteredServicesByVsat, searchTerm]);
         
         return e('div', null, [
           // Header
