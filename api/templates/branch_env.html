@@ -188,17 +188,20 @@
         const serviceId = urlParams.get('id') || 'unknown';
         const tabParam = urlParams.get('tab') || 'overview';  // Support ?tab=deployment parameter
         const runId = urlParams.get('run_id');  // ✅ Support ?run_id parameter for viewing specific runs
+        const envParam = urlParams.get('env');  // ✅ Support ?env=beta2 parameter
         
         const [activeTab, setActiveTab] = React.useState(tabParam);
         const [showStagingModal, setShowStagingModal] = React.useState(false);
         const [showRecertifyModal, setShowRecertifyModal] = React.useState(false);  // ✅ Re-certify confirmation dialog
         const [selectedEnvForRecertify, setSelectedEnvForRecertify] = React.useState(null);  // ✅ Track which env to re-certify
-        const [currentEnvironmentForAnalysis, setCurrentEnvironmentForAnalysis] = React.useState('prod');  // ✅ Track environment for analysis
+        const [currentEnvironmentForAnalysis, setCurrentEnvironmentForAnalysis] = React.useState(envParam || 'prod');  // ✅ Initialize from URL or default to prod
         const [serviceConfig, setServiceConfig] = React.useState(null);
         const [certificationUpdateTrigger, setCertificationUpdateTrigger] = React.useState(0);
         const [triggerAnalysis, setTriggerAnalysis] = React.useState(0);  // ✅ Counter to trigger analysis
         const [persistedDriftData, setPersistedDriftData] = React.useState(null);  // ✅ Persist drift data across tab switches
         const [persistedHasRunAnalysis, setPersistedHasRunAnalysis] = React.useState(false);  // ✅ Persist analysis flag
+        
+        console.log(`📊 BranchEnvironmentPage: Initial environment = '${envParam || 'prod'}'`);
         
         // ✅ Auto-switch to Drift Analysis tab if run_id is provided
         React.useEffect(() => {
@@ -2171,27 +2174,46 @@
       }
       
       function HistoryTab({serviceId, currentEnvironment, serviceConfig}) {
-        const [runHistory, setRunHistory] = React.useState([]);
+        const [allRunHistory, setAllRunHistory] = React.useState([]);  // ✅ Store ALL runs
         const [loading, setLoading] = React.useState(true);
         const [error, setError] = React.useState(null);
         const [selectedEnv, setSelectedEnv] = React.useState(currentEnvironment || 'prod');
         
+        // ✅ Update selectedEnv when currentEnvironment changes
+        React.useEffect(() => {
+          if (currentEnvironment && currentEnvironment !== selectedEnv) {
+            console.log(`📊 HistoryTab: Updating selectedEnv from '${selectedEnv}' to '${currentEnvironment}'`);
+            setSelectedEnv(currentEnvironment);
+          }
+        }, [currentEnvironment]);
+        
         // Get available environments from service config
         const availableEnvironments = serviceConfig?.environments || ['prod', 'dev', 'qa', 'staging', 'alpha', 'beta1', 'beta2'];
         
-        // Load run history from API
+        // Add "All Environments" option
+        const envOptions = ['all', ...availableEnvironments];
+        
+        // ✅ Filter runs based on selected environment (client-side)
+        const filteredRunHistory = React.useMemo(() => {
+          if (selectedEnv === 'all') {
+            return allRunHistory;
+          }
+          return allRunHistory.filter(run => run.environment === selectedEnv);
+        }, [allRunHistory, selectedEnv]);
+        
+        // Load run history from API (fetch ALL runs once)
         React.useEffect(() => {
           const loadRunHistory = async () => {
-            if (!serviceId || !selectedEnv) {
-              console.log('⚠️ HistoryTab: Missing serviceId or selectedEnv', {serviceId, selectedEnv});
+            if (!serviceId) {
+              console.log('⚠️ HistoryTab: Missing serviceId', {serviceId});
               return;
             }
             
-            console.log(`📊 HistoryTab: Loading run history for ${serviceId}/${selectedEnv}`);
+            console.log(`📊 HistoryTab: Loading ALL run history for ${serviceId}`);
             
             try {
               setLoading(true);
-              const url = `/api/services/${serviceId}/run-history/${selectedEnv}`;
+              const url = `/api/services/${serviceId}/run-history`;  // ✅ No environment parameter
               console.log(`   Fetching: ${url}`);
               
               const response = await fetch(url);
@@ -2207,12 +2229,12 @@
               console.log(`   Response data:`, data);
               console.log(`   Number of runs: ${data.runs ? data.runs.length : 0}`);
               
-              setRunHistory(data.runs || []);
+              setAllRunHistory(data.runs || []);
               setError(null);
             } catch (err) {
               console.error('❌ Error loading run history:', err);
               setError(err.message);
-              setRunHistory([]);
+              setAllRunHistory([]);
             } finally {
               setLoading(false);
               console.log('   Loading complete');
@@ -2220,7 +2242,7 @@
           };
           
           loadRunHistory();
-        }, [serviceId, selectedEnv]);
+        }, [serviceId]);  // ✅ Only re-fetch when serviceId changes
         
         // Format timestamp
         const formatTimestamp = (isoString) => {
@@ -2274,12 +2296,17 @@
           ]);
         }
         
-        if (runHistory.length === 0) {
+        if (filteredRunHistory.length === 0) {
+          const isAllEnvs = selectedEnv === 'all';
+          const envMessage = isAllEnvs 
+            ? 'any environment' 
+            : `${selectedEnv} environment`;
+            
           return e('div', {className: 'card', style: {textAlign: 'center', padding: '60px 20px'}}, [
             e('div', {style: {fontSize: '64px', marginBottom: '24px', opacity: '0.3'}}, '📭'),
             e('h3', {style: {fontSize: '20px', marginBottom: '12px', color: 'var(--text)'}}, 'No Analysis Runs Yet'),
             e('p', {style: {color: 'var(--muted)', marginBottom: '24px', maxWidth: '500px', margin: '0 auto'}}, 
-              `No drift analysis has been run for ${selectedEnv} environment yet. Run an analysis to start tracking configuration changes over time.`
+              `No drift analysis has been run for ${envMessage} yet. Run an analysis to start tracking configuration changes over time.`
             ),
             e('div', {style: {marginTop: '24px'}}, [
               e('button', {
@@ -2300,9 +2327,9 @@
         
         return e('div', {className: 'card'}, [
           e('div', {style: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px'}}, [
-            e('h3', {style: {margin: '0'}}, `Analysis History (${runHistory.length} runs)`),
+            e('h3', {style: {margin: '0'}}, `Analysis History (${filteredRunHistory.length} run${filteredRunHistory.length !== 1 ? 's' : ''})`),
             e('div', {style: {display: 'flex', alignItems: 'center', gap: '12px'}}, [
-              e('label', {style: {fontSize: '14px', fontWeight: '500', color: 'var(--muted)'}}, 'Environment:'),
+              e('label', {style: {fontSize: '14px', fontWeight: '500', color: 'var(--muted)'}}, 'Filter:'),
               e('select', {
                 value: selectedEnv,
                 onChange: (e) => setSelectedEnv(e.target.value),
@@ -2311,16 +2338,20 @@
                   borderRadius: '4px',
                   border: '1px solid var(--border)',
                   fontSize: '14px',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  backgroundColor: 'var(--background)',
+                  color: 'var(--text)'
                 }
-              }, availableEnvironments.map(env => 
-                e('option', {key: env, value: env}, env.toUpperCase())
+              }, envOptions.map(env => 
+                e('option', {key: env, value: env}, 
+                  env === 'all' ? 'All Environments' : env.toUpperCase()
+                )
               ))
             ])
           ]),
           
           // Run list
-          runHistory.map((run, index) => {
+          filteredRunHistory.map((run, index) => {
             const badge = getVerdictBadge(run.verdict);
             const metrics = run.metrics || {};
             const branches = run.branches || {};
@@ -2348,11 +2379,23 @@
                 e.currentTarget.style.transform = 'translateX(0)';
               }
             }, [
-              // Header row - Run number and verdict
+              // Header row - Run number, environment badge, and verdict
               e('div', {style: {display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center'}}, [
-                e('div', null, [
-                  e('strong', {style: {fontSize: '16px'}}, `Run #${runHistory.length - index}`),
-                  e('span', {style: {color: 'var(--muted)', marginLeft: '12px', fontSize: '14px'}}, 
+                e('div', {style: {display: 'flex', alignItems: 'center', gap: '12px'}}, [
+                  e('strong', {style: {fontSize: '16px'}}, `Run #${allRunHistory.length - allRunHistory.indexOf(run)}`),
+                  // ✅ Environment badge (show when viewing all environments)
+                  selectedEnv === 'all' && e('span', {
+                    style: {
+                      backgroundColor: 'var(--blue-light)',
+                      color: 'var(--blue)',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      textTransform: 'uppercase'
+                    }
+                  }, run.environment),
+                  e('span', {style: {color: 'var(--muted)', fontSize: '14px'}}, 
                     formatTimestamp(run.timestamp))
                 ]),
                 e('span', {className: badge.className}, badge.text)

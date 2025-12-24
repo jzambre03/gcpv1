@@ -1488,10 +1488,16 @@ async def revoke_golden_branch(service_id: str, environment: str):
         raise HTTPException(status_code=500, detail=f"Failed to revoke golden branch: {str(e)}")
 
 
-@app.get("/api/services/{service_id}/run-history/{environment}")
-async def get_run_history(service_id: str, environment: str):
-    """Get run history for a specific service/environment"""
-    logger.info(f"📊 Run history request: service_id={service_id}, environment={environment}")
+@app.get("/api/services/{service_id}/run-history")
+async def get_run_history(service_id: str, environment: str = None):
+    """Get run history for a specific service (optionally filtered by environment)
+    
+    Args:
+        service_id: The service identifier
+        environment: Optional environment filter (if not provided, returns all environments)
+    """
+    env_filter_msg = f"environment={environment}" if environment else "all environments"
+    logger.info(f"📊 Run history request: service_id={service_id}, {env_filter_msg}")
     logger.info(f"   Available services in config: {list(SERVICES_CONFIG.keys())}")
     
     if service_id not in SERVICES_CONFIG:
@@ -1500,18 +1506,18 @@ async def get_run_history(service_id: str, environment: str):
         # This allows viewing history for services that might have been removed from config
         logger.info(f"   Attempting to fetch runs anyway from database...")
     
-    # Validate environment only if service is in config
-    if service_id in SERVICES_CONFIG:
+    # Validate environment only if service is in config AND environment is specified
+    if environment and service_id in SERVICES_CONFIG:
         config = SERVICES_CONFIG[service_id]
         if environment not in config["environments"]:
             raise HTTPException(400, f"Invalid environment '{environment}'. Must be one of: {config['environments']}")
     
     try:
-        # Get all runs from database for this service/environment
+        # Get all runs from database for this service
         all_runs = get_all_validation_runs()
         logger.info(f"   Total runs in database: {len(all_runs)}")
         
-        # Filter by service and environment
+        # Filter by service (and optionally by environment)
         # NOTE: Handle VSAT prefix mismatches (e.g., "saja9l7_cxp-ptg-adapter" vs "cxp-ptg-adapter")
         filtered_runs = []
         for run in all_runs:
@@ -1521,8 +1527,8 @@ async def get_run_history(service_id: str, environment: str):
             # Log each run for debugging
             logger.debug(f"      Checking run: service_name='{run_service}', env='{run_env}'")
             
-            # Skip if environment doesn't match
-            if run_env != environment:
+            # Skip if environment filter is specified and doesn't match
+            if environment and run_env != environment:
                 continue
             
             matched = False
@@ -1565,7 +1571,8 @@ async def get_run_history(service_id: str, environment: str):
                 filtered_runs.append(run)
                 logger.info(f"         ✅ MATCHED ({match_type})")
         
-        logger.info(f"   Filtered runs for {service_id}/{environment}: {len(filtered_runs)}")
+        env_msg = f"{service_id}/{environment}" if environment else f"{service_id} (all environments)"
+        logger.info(f"   Filtered runs for {env_msg}: {len(filtered_runs)}")
         
         # Also log all unique service names for debugging
         unique_service_names = set(run.get('service_name', '') for run in all_runs)
@@ -1648,11 +1655,18 @@ async def get_run_history(service_id: str, environment: str):
         
         logger.info(f"✅ Returning {len(transformed_runs)} transformed runs")
         
-        return {
+        response = {
             "service_id": service_id,
-            "environment": environment,
             "runs": transformed_runs
         }
+        
+        # Include environment in response if it was filtered
+        if environment:
+            response["environment"] = environment
+        else:
+            response["all_environments"] = True
+        
+        return response
     except Exception as e:
         logger.error(f"❌ Failed to get run history from database: {e}")
         logger.exception("Full traceback:")
