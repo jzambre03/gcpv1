@@ -2179,6 +2179,13 @@
         const [error, setError] = React.useState(null);
         const [selectedEnv, setSelectedEnv] = React.useState('all');  // ✅ Default to 'all' to show all runs
         
+        console.log(`📊 HistoryTab initialized with:`, {
+          serviceId,
+          currentEnvironment,
+          selectedEnv,
+          serviceConfig: serviceConfig ? 'present' : 'null'
+        });
+        
         // Get available environments from service config
         const availableEnvironments = serviceConfig?.environments || ['prod', 'dev', 'qa', 'staging', 'alpha', 'beta1', 'beta2'];
         
@@ -2187,10 +2194,20 @@
         
         // ✅ Filter runs based on selected environment (client-side)
         const filteredRunHistory = React.useMemo(() => {
+          console.log(`🔍 Filtering runs:`, {
+            selectedEnv,
+            totalRuns: allRunHistory.length,
+            environments: [...new Set(allRunHistory.map(r => r.environment))]
+          });
+          
           if (selectedEnv === 'all') {
+            console.log(`   → Showing all ${allRunHistory.length} runs`);
             return allRunHistory;
           }
-          return allRunHistory.filter(run => run.environment === selectedEnv);
+          
+          const filtered = allRunHistory.filter(run => run.environment === selectedEnv);
+          console.log(`   → Filtered to ${filtered.length} runs for ${selectedEnv}`);
+          return filtered;
         }, [allRunHistory, selectedEnv]);
         
         // Load run history from API (fetch ALL runs once)
@@ -2294,25 +2311,53 @@
             ? 'any environment' 
             : `${selectedEnv} environment`;
             
-          return e('div', {className: 'card', style: {textAlign: 'center', padding: '60px 20px'}}, [
-            e('div', {style: {fontSize: '64px', marginBottom: '24px', opacity: '0.3'}}, '📭'),
-            e('h3', {style: {fontSize: '20px', marginBottom: '12px', color: 'var(--text)'}}, 'No Analysis Runs Yet'),
-            e('p', {style: {color: 'var(--muted)', marginBottom: '24px', maxWidth: '500px', margin: '0 auto'}}, 
-              `No drift analysis has been run for ${envMessage} yet. Run an analysis to start tracking configuration changes over time.`
-            ),
-            e('div', {style: {marginTop: '24px'}}, [
-              e('button', {
-                className: 'btn primary',
-                onClick: () => {
-                  // Switch to Drift Analysis tab
-                  const deploymentTab = document.querySelector('.tab:nth-child(3)');
-                  if (deploymentTab) deploymentTab.click();
-                },
-                style: {marginRight: '12px'}
-              }, '🚀 Run Analysis Now'),
-              e('div', {style: {marginTop: '16px', fontSize: '13px', color: 'var(--muted)'}}, 
-                'Tip: Analysis runs will appear here with detailed metrics and results'
-              )
+          return e('div', {className: 'card'}, [
+            // ✅ Header with dropdown (even when no runs)
+            e('div', {style: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px'}}, [
+              e('h3', {style: {margin: '0'}}, `Analysis History (0 runs)`),
+              e('div', {style: {display: 'flex', alignItems: 'center', gap: '12px'}}, [
+                e('label', {style: {fontSize: '14px', fontWeight: '500', color: 'var(--muted)'}}, 'Filter:'),
+                e('select', {
+                  value: selectedEnv,
+                  onChange: (e) => setSelectedEnv(e.target.value),
+                  style: {
+                    padding: '6px 12px',
+                    borderRadius: '4px',
+                    border: '1px solid var(--border)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    backgroundColor: 'var(--background)',
+                    color: 'var(--text)'
+                  }
+                }, envOptions.map(env => 
+                  e('option', {key: env, value: env}, 
+                    env === 'all' ? 'All Environments' : env.toUpperCase()
+                  )
+                ))
+              ])
+            ]),
+            
+            // Empty state content
+            e('div', {style: {textAlign: 'center', padding: '60px 20px'}}, [
+              e('div', {style: {fontSize: '64px', marginBottom: '24px', opacity: '0.3'}}, '📭'),
+              e('h3', {style: {fontSize: '20px', marginBottom: '12px', color: 'var(--text)'}}, 'No Analysis Runs Yet'),
+              e('p', {style: {color: 'var(--muted)', marginBottom: '24px', maxWidth: '500px', margin: '0 auto'}}, 
+                `No drift analysis has been run for ${envMessage} yet. Run an analysis to start tracking configuration changes over time.`
+              ),
+              e('div', {style: {marginTop: '24px'}}, [
+                e('button', {
+                  className: 'btn primary',
+                  onClick: () => {
+                    // Switch to Drift Analysis tab
+                    const deploymentTab = document.querySelector('.tab:nth-child(3)');
+                    if (deploymentTab) deploymentTab.click();
+                  },
+                  style: {marginRight: '12px'}
+                }, '🚀 Run Analysis Now'),
+                e('div', {style: {marginTop: '16px', fontSize: '13px', color: 'var(--muted)'}}, 
+                  'Tip: Analysis runs will appear here with detailed metrics and results'
+                )
+              ])
             ])
           ]);
         }
