@@ -638,15 +638,34 @@ async def get_llm_output_endpoint():
 
 
 @app.get("/api/services")
-async def get_services():
-    """Get configured services with their status (loaded from database)"""
-    # Reload services from database to get latest changes
-    global SERVICES_CONFIG
-    SERVICES_CONFIG = load_services_from_db()
+async def get_services(vsat: Optional[str] = None):
+    """
+    Get configured services with their status (loaded from database)
     
+    Args:
+        vsat: Optional comma-separated list of VSAT names to filter by (e.g., "saja9l7,other_vsat")
+    """
+    # Get services directly from database to include VSAT information
+    services_list = get_all_services(active_only=True, with_branches_only=True)
+    
+    # Parse VSAT filter if provided
+    selected_vsats = None
+    if vsat:
+        selected_vsats = [v.strip() for v in vsat.split(",") if v.strip()]
+    
+    # Get all unique VSATs for dropdown
+    all_vsats = set()
     services = []
     
-    for service_id, config in SERVICES_CONFIG.items():
+    for service in services_list:
+        service_id = service['service_id']
+        service_vsat = service.get('vsat', 'unknown')
+        all_vsats.add(service_vsat)
+        
+        # Filter by VSAT if specified
+        if selected_vsats and service_vsat not in selected_vsats:
+            continue
+        
         # Get last validation for this service
         last_result = get_last_service_result(service_id)
         
@@ -701,20 +720,26 @@ async def get_services():
         
         services.append({
             "id": service_id,
-            "name": config["name"],
+            "name": service['service_name'],
             "status": status,
             "last_check": last_result.get("timestamp") if last_result else None,
             "issues": issues_count,
-            "repo_url": config["repo_url"],
-            "main_branch": config["main_branch"],
-            "environments": config["environments"],
-            "total_environments": len(config["environments"])
+            "repo_url": service['repo_url'],
+            "main_branch": service['main_branch'],
+            "environments": service['environments'],
+            "total_environments": len(service['environments']),
+            "vsat": service_vsat
         })
+    
+    # Update global SERVICES_CONFIG for backward compatibility
+    global SERVICES_CONFIG
+    SERVICES_CONFIG = load_services_from_db()
     
     return {
         "services": services,
         "total_services": len(services),
         "active_issues": sum(s["issues"] for s in services),
+        "available_vsats": sorted(list(all_vsats)),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 

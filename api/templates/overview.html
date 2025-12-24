@@ -78,6 +78,55 @@
       padding: 32px;
     }
     
+    /* VSAT Filter */
+    .vsat-filter {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    
+    .vsat-filter-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #666;
+      margin-bottom: 12px;
+      display: block;
+    }
+    
+    .vsat-select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #d0d0d0;
+      border-radius: 4px;
+      font-size: 14px;
+      background: white;
+      min-height: 120px;
+      cursor: pointer;
+    }
+    
+    .vsat-select:focus {
+      outline: none;
+      border-color: #666;
+    }
+    
+    .vsat-select option {
+      padding: 8px;
+    }
+    
+    .vsat-select option:checked {
+      background: #1a1a1a;
+      color: white;
+    }
+    
+    .vsat-filter-hint {
+      font-size: 12px;
+      color: #999;
+      margin-top: 8px;
+    }
+    
     /* KPI Cards */
     .kpi-grid {
       display: grid;
@@ -363,6 +412,14 @@
         width: 100%;
       }
       
+      .vsat-filter {
+        padding: 16px;
+      }
+      
+      .vsat-select {
+        min-height: 100px;
+      }
+      
       .kpi-grid {
         grid-template-columns: 1fr;
       }
@@ -580,15 +637,22 @@
         const [error, setError] = React.useState(null);
         const [searchTerm, setSearchTerm] = React.useState('');
         const [analyzingId, setAnalyzingId] = React.useState(null);
+        const [availableVsats, setAvailableVsats] = React.useState([]);
+        const [selectedVsats, setSelectedVsats] = React.useState([]);
         const [kpis, setKpis] = React.useState({
           totalServices: 0,
           activeIssues: 0
         });
         
         // Load services
-        const loadServices = React.useCallback(async () => {
+        const loadServices = React.useCallback(async (vsatFilter) => {
           try {
-            const response = await fetch('/api/services');
+            let url = '/api/services';
+            if (vsatFilter && vsatFilter.length > 0) {
+              url += '?vsat=' + encodeURIComponent(vsatFilter.join(','));
+            }
+            
+            const response = await fetch(url);
             const data = await response.json();
             
             if (!response.ok) {
@@ -596,10 +660,13 @@
             }
             
             setServices(data.services || []);
+            setAvailableVsats(data.available_vsats || []);
             
+            // Calculate KPIs from filtered services
+            const filteredServices = data.services || [];
             setKpis({
-              totalServices: data.total_services || 0,
-              activeIssues: data.active_issues || 0
+              totalServices: filteredServices.length,
+              activeIssues: filteredServices.reduce((sum, s) => sum + (s.issues || 0), 0)
             });
             
             setLoading(false);
@@ -633,14 +700,21 @@
           }
         }, []);
         
-        // Load on mount and set auto-refresh
-        React.useEffect(() => {
-          loadServices();
-          const interval = setInterval(loadServices, 30000);
-          return () => clearInterval(interval);
+        // Handle VSAT filter change
+        const handleVsatChange = React.useCallback((e) => {
+          const selected = Array.from(e.target.selectedOptions, option => option.value);
+          setSelectedVsats(selected);
+          loadServices(selected);
         }, [loadServices]);
         
-        // Filter services
+        // Load on mount and set auto-refresh
+        React.useEffect(() => {
+          loadServices([]);
+          const interval = setInterval(() => loadServices(selectedVsats), 30000);
+          return () => clearInterval(interval);
+        }, [loadServices, selectedVsats]);
+        
+        // Filter services by search term (VSAT filtering is done server-side)
         const filteredServices = React.useMemo(() => {
           if (!searchTerm) return services;
           const term = searchTerm.toLowerCase();
@@ -675,6 +749,26 @@
           
           // Container
           e('div', {key: 'container', className: 'container'}, [
+            // VSAT Filter
+            availableVsats.length > 0 && e('div', {key: 'vsat-filter', className: 'vsat-filter'}, [
+              e('label', {key: 'label', className: 'vsat-filter-label', htmlFor: 'vsat-select'}, 
+                'Filter by VSAT' + (selectedVsats.length > 0 ? ` (${selectedVsats.length} selected)` : ' (All)')
+              ),
+              e('select', {
+                key: 'select',
+                id: 'vsat-select',
+                className: 'vsat-select',
+                multiple: true,
+                value: selectedVsats,
+                onChange: handleVsatChange
+              }, availableVsats.map(vsat => 
+                e('option', {key: vsat, value: vsat}, vsat)
+              )),
+              e('div', {key: 'hint', className: 'vsat-filter-hint'}, 
+                'Hold Ctrl (Cmd on Mac) to select multiple VSATs. Leave empty to show all services.'
+              )
+            ]),
+            
             // KPIs
             e('div', {key: 'kpis', className: 'kpi-grid'}, [
               e(KPICard, {
