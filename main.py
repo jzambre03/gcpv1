@@ -49,7 +49,7 @@ from watchdog.events import FileSystemEventHandler
 # Import database functions
 from shared.db import (
     get_run_by_id, get_all_validation_runs,
-    get_context_bundle, get_llm_output, get_policy_validation,
+    get_context_bundle, get_latest_context_bundle, get_llm_output, get_policy_validation,
     get_certification, get_report, get_aggregated_results,
     # NEW: Services configuration
     get_all_services, get_service_by_id, add_service, init_db
@@ -1513,18 +1513,48 @@ async def get_run_history(service_id: str, environment: str):
         for run in filtered_runs:
             # Get additional data for each run
             llm_output = get_llm_output(run['run_id'])
+            policy_validation = get_policy_validation(run['run_id'])
+            context_bundle = get_latest_context_bundle(run['run_id'])  # ✅ FIXED: Use get_latest_context_bundle instead
             
-            # Build metrics from llm_output
-            metrics = {}
+            # Build metrics from llm_output and context_bundle
+            metrics = {
+                'files_with_drift': 0,
+                'total_deltas': 0,
+                'policy_violations': 0,
+                'overall_risk_level': 'unknown'
+            }
+            
             if llm_output:
                 summary = llm_output.get('summary', {})
-                metrics = {
+                metrics.update({
                     'total_drifts': summary.get('total_drifts', 0),
                     'high_risk': summary.get('high_risk', 0),
                     'medium_risk': summary.get('medium_risk', 0),
                     'low_risk': summary.get('low_risk', 0),
-                    'allowed_variance': summary.get('allowed_variance', 0)
-                }
+                    'allowed_variance': summary.get('allowed_variance', 0),
+                    'files_with_drift': summary.get('files_with_drift', summary.get('total_files', 0)),
+                    'overall_risk_level': summary.get('overall_risk_level', 'medium' if summary.get('medium_risk', 0) > 0 else 'low')
+                })
+            
+            # Get total_deltas and files_with_drift from context_bundle
+            if context_bundle:
+                # Context bundle structure has 'overview' with metrics
+                overview = context_bundle.get('overview', {})
+                metrics['total_deltas'] = overview.get('total_deltas', 0)
+                # If files_with_drift wasn't in LLM output, get it from context bundle
+                if metrics['files_with_drift'] == 0:
+                    metrics['files_with_drift'] = overview.get('files_with_drift', 0)
+            
+            # Get policy violations from policy_validation
+            if policy_validation:
+                validation_data = policy_validation.get('validation_data', {})
+                policy_summary = validation_data.get('policy_summary', {})
+                metrics['policy_violations'] = policy_summary.get('total_violations', 0)
+            
+            # Calculate execution time in seconds
+            execution_time_seconds = None
+            if run.get('execution_time_ms'):
+                execution_time_seconds = run['execution_time_ms'] / 1000.0
             
             transformed_run = {
                 'run_id': run['run_id'],
@@ -1534,10 +1564,11 @@ async def get_run_history(service_id: str, environment: str):
                 'created_at': run.get('created_at', ''),
                 'environment': run.get('environment', ''),
                 'service_name': run.get('service_name', service_id),
+                'execution_time_seconds': execution_time_seconds,
                 'metrics': metrics,
                 'branches': {
-                    'golden': run.get('golden_branch', ''),
-                    'drift': run.get('drift_branch', '')
+                    'golden_branch': run.get('golden_branch', ''),
+                    'drift_branch': run.get('drift_branch', '')
                 }
             }
             transformed_runs.append(transformed_run)
