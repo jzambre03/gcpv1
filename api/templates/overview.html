@@ -668,6 +668,21 @@
           e('td', {key: 'service'}, 
             e('div', {className: 'service-name'}, service.name)
           ),
+          e('td', {key: 'vsat'}, 
+            e('div', {
+              style: {
+                display: 'inline-block',
+                padding: '4px 10px',
+                backgroundColor: '#e0f2fe',
+                color: '#0369a1',
+                borderRadius: '6px',
+                fontSize: '12px',
+                fontWeight: '600',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px'
+              }
+            }, service.vsat || 'N/A')
+          ),
           e('td', {key: 'env'}, 
             loading ? e('span', {style: {color: '#999'}}, 'Loading...') :
             e('div', {style: {display: 'flex', flexDirection: 'column', gap: '4px'}}, 
@@ -1021,11 +1036,12 @@
                     e('thead', {key: 'head'}, 
                       e('tr', null, [
                         e('th', {key: '1'}, 'Service'),
-                        e('th', {key: '2'}, 'Environment'),
-                        e('th', {key: '3'}, 'Status'),
-                        e('th', {key: '4'}, 'Last Check'),
-                        e('th', {key: '5'}, 'Issues'),
-                        e('th', {key: '6'}, 'Actions')
+                        e('th', {key: '2'}, 'VSAT'),
+                        e('th', {key: '3'}, 'Environment'),
+                        e('th', {key: '4'}, 'Status'),
+                        e('th', {key: '5'}, 'Last Check'),
+                        e('th', {key: '6'}, 'Issues'),
+                        e('th', {key: '7'}, 'Actions')
                       ])
                     ),
                     e('tbody', {key: 'body'}, 
