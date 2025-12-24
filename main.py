@@ -1491,16 +1491,25 @@ async def revoke_golden_branch(service_id: str, environment: str):
 @app.get("/api/services/{service_id}/run-history/{environment}")
 async def get_run_history(service_id: str, environment: str):
     """Get run history for a specific service/environment"""
-    if service_id not in SERVICES_CONFIG:
-        raise HTTPException(404, f"Service {service_id} not found")
+    logger.info(f"📊 Run history request: service_id={service_id}, environment={environment}")
+    logger.info(f"   Available services in config: {list(SERVICES_CONFIG.keys())}")
     
-    config = SERVICES_CONFIG[service_id]
-    if environment not in config["environments"]:
-        raise HTTPException(400, f"Invalid environment '{environment}'. Must be one of: {config['environments']}")
+    if service_id not in SERVICES_CONFIG:
+        logger.warning(f"❌ Service {service_id} not found in SERVICES_CONFIG")
+        # Don't fail - still try to get runs from database
+        # This allows viewing history for services that might have been removed from config
+        logger.info(f"   Attempting to fetch runs anyway from database...")
+    
+    # Validate environment only if service is in config
+    if service_id in SERVICES_CONFIG:
+        config = SERVICES_CONFIG[service_id]
+        if environment not in config["environments"]:
+            raise HTTPException(400, f"Invalid environment '{environment}'. Must be one of: {config['environments']}")
     
     try:
         # Get all runs from database for this service/environment
         all_runs = get_all_validation_runs()
+        logger.info(f"   Total runs in database: {len(all_runs)}")
         
         # Filter by service and environment
         filtered_runs = [
@@ -1508,13 +1517,24 @@ async def get_run_history(service_id: str, environment: str):
             if run.get('service_name') == service_id and run.get('environment') == environment
         ]
         
+        logger.info(f"   Filtered runs for {service_id}/{environment}: {len(filtered_runs)}")
+        
+        if filtered_runs:
+            logger.info(f"   Sample run IDs: {[r['run_id'] for r in filtered_runs[:3]]}")
+        
         # Transform runs to match UI expectations
         transformed_runs = []
         for run in filtered_runs:
+            logger.info(f"   Processing run: {run['run_id']}")
+            
             # Get additional data for each run
             llm_output = get_llm_output(run['run_id'])
             policy_validation = get_policy_validation(run['run_id'])
             context_bundle = get_latest_context_bundle(run['run_id'])  # ✅ FIXED: Use get_latest_context_bundle instead
+            
+            logger.info(f"      LLM output: {llm_output is not None}")
+            logger.info(f"      Policy validation: {policy_validation is not None}")
+            logger.info(f"      Context bundle: {context_bundle is not None}")
             
             # Build metrics from llm_output and context_bundle
             metrics = {
@@ -1573,17 +1593,21 @@ async def get_run_history(service_id: str, environment: str):
             }
             transformed_runs.append(transformed_run)
         
+        logger.info(f"✅ Returning {len(transformed_runs)} transformed runs")
+        
         return {
             "service_id": service_id,
             "environment": environment,
             "runs": transformed_runs
         }
     except Exception as e:
-        logger.error(f"Failed to get run history from database: {e}")
+        logger.error(f"❌ Failed to get run history from database: {e}")
+        logger.exception("Full traceback:")
         return {
             "service_id": service_id,
             "environment": environment,
-            "runs": []
+            "runs": [],
+            "error": str(e)
         }
 
 

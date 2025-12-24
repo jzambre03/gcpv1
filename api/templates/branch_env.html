@@ -2179,21 +2179,40 @@
         // Load run history from API
         React.useEffect(() => {
           const loadRunHistory = async () => {
-            if (!serviceId || !selectedEnv) return;
+            if (!serviceId || !selectedEnv) {
+              console.log('⚠️ HistoryTab: Missing serviceId or selectedEnv', {serviceId, selectedEnv});
+              return;
+            }
+            
+            console.log(`📊 HistoryTab: Loading run history for ${serviceId}/${selectedEnv}`);
             
             try {
               setLoading(true);
-              const response = await fetch(`/api/services/${serviceId}/run-history/${selectedEnv}`);
-              if (!response.ok) throw new Error('Failed to load run history');
+              const url = `/api/services/${serviceId}/run-history/${selectedEnv}`;
+              console.log(`   Fetching: ${url}`);
+              
+              const response = await fetch(url);
+              console.log(`   Response status: ${response.status} ${response.statusText}`);
+              
+              if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`   Error response: ${errorText}`);
+                throw new Error('Failed to load run history');
+              }
+              
               const data = await response.json();
+              console.log(`   Response data:`, data);
+              console.log(`   Number of runs: ${data.runs ? data.runs.length : 0}`);
+              
               setRunHistory(data.runs || []);
               setError(null);
             } catch (err) {
-              console.error('Error loading run history:', err);
+              console.error('❌ Error loading run history:', err);
               setError(err.message);
               setRunHistory([]);
             } finally {
               setLoading(false);
+              console.log('   Loading complete');
             }
           };
           
@@ -2253,11 +2272,26 @@
         }
         
         if (runHistory.length === 0) {
-          return e('div', {className: 'card', style: {textAlign: 'center', padding: '40px'}}, [
-            e('div', {style: {fontSize: '48px', marginBottom: '16px'}}, '📭'),
-            e('div', {style: {fontSize: '18px', marginBottom: '8px'}}, 'No analysis runs yet'),
-            e('div', {style: {color: 'var(--muted)', marginTop: '8px'}}, 
-              `Run an analysis for ${selectedEnv} environment to see results here`)
+          return e('div', {className: 'card', style: {textAlign: 'center', padding: '60px 20px'}}, [
+            e('div', {style: {fontSize: '64px', marginBottom: '24px', opacity: '0.3'}}, '📭'),
+            e('h3', {style: {fontSize: '20px', marginBottom: '12px', color: 'var(--text)'}}, 'No Analysis Runs Yet'),
+            e('p', {style: {color: 'var(--muted)', marginBottom: '24px', maxWidth: '500px', margin: '0 auto'}}, 
+              `No drift analysis has been run for ${selectedEnv} environment yet. Run an analysis to start tracking configuration changes over time.`
+            ),
+            e('div', {style: {marginTop: '24px'}}, [
+              e('button', {
+                className: 'btn primary',
+                onClick: () => {
+                  // Switch to Drift Analysis tab
+                  const deploymentTab = document.querySelector('.tab:nth-child(3)');
+                  if (deploymentTab) deploymentTab.click();
+                },
+                style: {marginRight: '12px'}
+              }, '🚀 Run Analysis Now'),
+              e('div', {style: {marginTop: '16px', fontSize: '13px', color: 'var(--muted)'}}, 
+                'Tip: Analysis runs will appear here with detailed metrics and results'
+              )
+            ])
           ]);
         }
         
