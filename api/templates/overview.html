@@ -803,7 +803,10 @@
         }, [isDropdownOpen, selectedVsats]);
         
         // Handle checkbox change
-        const handleCheckboxChange = React.useCallback((vsat) => {
+        const handleCheckboxChange = React.useCallback((vsat, e) => {
+          if (e) {
+            e.stopPropagation();
+          }
           setTempSelectedVsats(prev => {
             if (prev.includes(vsat)) {
               return prev.filter(v => v !== vsat);
@@ -902,7 +905,8 @@
               // Dropdown Panel
               e('div', {
                 key: 'dropdown',
-                className: 'vsat-dropdown' + (isDropdownOpen ? ' open' : '')
+                className: 'vsat-dropdown' + (isDropdownOpen ? ' open' : ''),
+                onClick: (e) => e.stopPropagation()
               }, [
                 // Header
                 e('div', {key: 'header', className: 'vsat-dropdown-header'}, 'Select VSATs'),
@@ -913,18 +917,29 @@
                     e('div', {
                       key: vsat,
                       className: 'vsat-dropdown-item',
-                      onClick: () => handleCheckboxChange(vsat)
+                      onClick: (e) => {
+                        e.preventDefault();
+                        handleCheckboxChange(vsat, e);
+                      }
                     }, [
                       e('input', {
                         key: 'checkbox',
                         type: 'checkbox',
                         className: 'vsat-checkbox',
                         checked: tempSelectedVsats.includes(vsat),
-                        onChange: () => handleCheckboxChange(vsat)
+                        onChange: (e) => {
+                          e.stopPropagation();
+                          handleCheckboxChange(vsat, e);
+                        },
+                        onClick: (e) => e.stopPropagation()
                       }),
                       e('label', {
                         key: 'label',
-                        className: 'vsat-dropdown-label'
+                        className: 'vsat-dropdown-label',
+                        onClick: (e) => {
+                          e.preventDefault();
+                          handleCheckboxChange(vsat, e);
+                        }
                       }, vsat)
                     ])
                   )
@@ -935,12 +950,20 @@
                   e('button', {
                     key: 'cancel',
                     className: 'vsat-btn',
-                    onClick: cancelFilter
+                    onClick: (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      cancelFilter();
+                    }
                   }, 'Cancel'),
                   e('button', {
                     key: 'apply',
                     className: 'vsat-btn primary',
-                    onClick: applyFilter
+                    onClick: (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      applyFilter();
+                    }
                   }, 'Apply')
                 ])
               ])
