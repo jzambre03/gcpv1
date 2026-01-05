@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from typing import Dict, Any, Optional
+from pathlib import Path
 
 
 def setup_logging(log_level: Optional[str] = None) -> None:
@@ -100,3 +101,111 @@ def get_agent_logger(agent_name: str) -> logging.Logger:
 def get_tool_logger(tool_name: str) -> logging.Logger:
     """Get a properly configured logger for a tool."""
     return logging.getLogger(f"tools.{tool_name}")
+
+
+class DatabaseLogHandler(logging.Handler):
+    """
+    Custom logging handler that saves logs to the database.
+    
+    This handler saves all log records to the database for persistent storage,
+    querying, and analysis.
+    """
+    
+    def __init__(self, log_type: str = 'system', **context):
+        """
+        Initialize the database log handler.
+        
+        Args:
+            log_type: Type of logs (system, vsat_sync, analysis, git, etc.)
+            **context: Additional context (run_id, service_name, environment, vsat)
+        """
+        super().__init__()
+        self.log_type = log_type
+        self.context = context
+        
+        # Import here to avoid circular imports
+        from .db import save_log
+        self.save_log = save_log
+    
+    def emit(self, record: logging.LogRecord):
+        """
+        Emit a log record to the database.
+        
+        Args:
+            record: LogRecord to save
+        """
+        try:
+            # Extract context from record if available
+            run_id = getattr(record, 'run_id', self.context.get('run_id'))
+            service_name = getattr(record, 'service_name', self.context.get('service_name'))
+            environment = getattr(record, 'environment', self.context.get('environment'))
+            vsat = getattr(record, 'vsat', self.context.get('vsat'))
+            
+            # Build metadata
+            metadata = {
+                'thread': record.thread,
+                'thread_name': record.threadName,
+                'process': record.process,
+                'process_name': record.processName,
+            }
+            
+            # Add exception info if present
+            if record.exc_info:
+                metadata['exception'] = self.format(record)
+            
+            # Save to database
+            self.save_log(
+                log_level=record.levelname,
+                logger_name=record.name,
+                message=record.getMessage(),
+                module=record.module,
+                function_name=record.funcName,
+                line_number=record.lineno,
+                log_type=self.log_type,
+                run_id=run_id,
+                service_name=service_name,
+                environment=environment,
+                vsat=vsat,
+                metadata=metadata
+            )
+        except Exception as e:
+            # Don't let logging failures break the application
+            # Use handleError to report the error
+            self.handleError(record)
+
+
+def add_database_logging(
+    log_type: str = 'system',
+    log_level: int = logging.INFO,
+    **context
+) -> DatabaseLogHandler:
+    """
+    Add database logging handler to the root logger.
+    
+    Args:
+        log_type: Type of logs (system, vsat_sync, analysis, git, etc.)
+        log_level: Minimum log level to save to database
+        **context: Additional context (run_id, service_name, environment, vsat)
+        
+    Returns:
+        The database handler instance
+    """
+    handler = DatabaseLogHandler(log_type=log_type, **context)
+    handler.setLevel(log_level)
+    
+    # Add to root logger
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    
+    return handler
+
+
+def remove_database_logging(handler: DatabaseLogHandler):
+    """
+    Remove database logging handler from the root logger.
+    
+    Args:
+        handler: The database handler to remove
+    """
+    root_logger = logging.getLogger()
+    root_logger.removeHandler(handler)

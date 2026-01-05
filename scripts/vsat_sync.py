@@ -48,6 +48,7 @@ from shared.git_operations import (
     create_env_specific_config_branch
 )
 from shared.golden_branch_tracker import add_golden_branch
+from shared.logging_config import add_database_logging, remove_database_logging
 
 logging.basicConfig(
     level=logging.INFO,
@@ -129,10 +130,10 @@ class VSATSyncLogger:
     
     def _setup_python_logging(self):
         """
-        Setup a Python logging handler to capture logs from ALL modules.
+        Setup Python logging to capture logs to both file and database.
         This captures logs from git_operations, env_filter, db, etc.
         """
-        # Create file handler for Python logging
+        # Create file handler for Python logging (for backward compatibility)
         file_handler = logging.FileHandler(self.log_file, mode='a', encoding='utf-8')
         file_handler.setLevel(logging.DEBUG)
         
@@ -147,13 +148,21 @@ class VSATSyncLogger:
         root_logger = logging.getLogger()
         root_logger.addHandler(file_handler)
         
+        # Add database logging handler
+        db_handler = add_database_logging(
+            log_type='vsat_sync',
+            log_level=logging.INFO,
+            vsat=self.vsat_name
+        )
+        
         # Ensure child loggers propagate to root
         for logger_name in ['scripts.vsat_sync', 'shared.git_operations', 'shared.env_filter', 'shared.db']:
             child_logger = logging.getLogger(logger_name)
             child_logger.propagate = True
         
-        # Store handler reference for cleanup
+        # Store handler references for cleanup
         self.file_handler = file_handler
+        self.db_handler = db_handler
     
     def _write_log(self, message: str):
         """Write message to log file"""
@@ -226,11 +235,15 @@ class VSATSyncLogger:
         Args:
             status: 'success', 'failed', or 'partial'
         """
-        # Remove the file handler from root logger to prevent duplicate logs
+        # Remove handlers from root logger to prevent duplicate logs
+        root_logger = logging.getLogger()
+        
         if hasattr(self, 'file_handler'):
-            root_logger = logging.getLogger()
             root_logger.removeHandler(self.file_handler)
             self.file_handler.close()
+        
+        if hasattr(self, 'db_handler'):
+            remove_database_logging(self.db_handler)
         
         end_time = datetime.now()
         duration = (end_time - self.start_time).total_seconds()

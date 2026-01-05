@@ -219,6 +219,27 @@ def init_db():
             )
         """)
         
+        # Table 11: System Logs (NEW)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                log_level TEXT NOT NULL,
+                logger_name TEXT NOT NULL,
+                message TEXT NOT NULL,
+                module TEXT,
+                function_name TEXT,
+                line_number INTEGER,
+                log_type TEXT DEFAULT 'system',
+                run_id TEXT,
+                service_name TEXT,
+                environment TEXT,
+                vsat TEXT,
+                metadata JSON,
+                FOREIGN KEY (run_id) REFERENCES validation_runs(run_id)
+            )
+        """)
+        
         # Create indexes for better query performance
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_runs_service_env ON validation_runs(service_name, environment)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_runs_created ON validation_runs(created_at)")
@@ -227,6 +248,11 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_branches_active ON golden_branches(is_active)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_active ON services(is_active)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_id ON services(service_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_created ON logs(created_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(log_level)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_type ON logs(log_type)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_run ON logs(run_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_service ON logs(service_name, environment)")
         
         conn.commit()
         logger.info(f"✅ Database initialized at {DB_PATH}")
@@ -1108,4 +1134,214 @@ def delete_service(service_id: str) -> None:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM services WHERE service_id = ?", (service_id,))
         logger.warning(f"🗑️ Permanently deleted service: {service_id}")
+
+
+# ============================================================================
+# Logs Management
+# ============================================================================
+
+def save_log(
+    log_level: str,
+    logger_name: str,
+    message: str,
+    module: Optional[str] = None,
+    function_name: Optional[str] = None,
+    line_number: Optional[int] = None,
+    log_type: str = 'system',
+    run_id: Optional[str] = None,
+    service_name: Optional[str] = None,
+    environment: Optional[str] = None,
+    vsat: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    """
+    Save a log entry to the database.
+    
+    Args:
+        log_level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        logger_name: Name of the logger
+        message: Log message
+        module: Module name where log originated
+        function_name: Function name where log originated
+        line_number: Line number where log originated
+        log_type: Type of log (system, vsat_sync, analysis, git, etc.)
+        run_id: Associated validation run ID (if applicable)
+        service_name: Associated service name (if applicable)
+        environment: Associated environment (if applicable)
+        vsat: Associated VSAT (if applicable)
+        metadata: Additional metadata as JSON
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO logs (
+                    log_level, logger_name, message, module, function_name, 
+                    line_number, log_type, run_id, service_name, environment, 
+                    vsat, metadata
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                log_level,
+                logger_name,
+                message,
+                module,
+                function_name,
+                line_number,
+                log_type,
+                run_id,
+                service_name,
+                environment,
+                vsat,
+                json.dumps(metadata) if metadata else None
+            ))
+    except Exception as e:
+        # Don't let logging failures break the application
+        print(f"⚠️ Failed to save log to database: {e}")
+
+
+def get_logs(
+    log_level: Optional[str] = None,
+    log_type: Optional[str] = None,
+    run_id: Optional[str] = None,
+    service_name: Optional[str] = None,
+    environment: Optional[str] = None,
+    vsat: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    limit: int = 1000
+) -> List[Dict[str, Any]]:
+    """
+    Query logs from database with optional filters.
+    
+    Args:
+        log_level: Filter by log level
+        log_type: Filter by log type
+        run_id: Filter by run ID
+        service_name: Filter by service name
+        environment: Filter by environment
+        vsat: Filter by VSAT
+        start_time: Filter logs after this timestamp
+        end_time: Filter logs before this timestamp
+        limit: Maximum number of logs to return
+        
+    Returns:
+        List of log entries
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        query = "SELECT * FROM logs WHERE 1=1"
+        params = []
+        
+        if log_level:
+            query += " AND log_level = ?"
+            params.append(log_level)
+        
+        if log_type:
+            query += " AND log_type = ?"
+            params.append(log_type)
+        
+        if run_id:
+            query += " AND run_id = ?"
+            params.append(run_id)
+        
+        if service_name:
+            query += " AND service_name = ?"
+            params.append(service_name)
+        
+        if environment:
+            query += " AND environment = ?"
+            params.append(environment)
+        
+        if vsat:
+            query += " AND vsat = ?"
+            params.append(vsat)
+        
+        if start_time:
+            query += " AND created_at >= ?"
+            params.append(start_time)
+        
+        if end_time:
+            query += " AND created_at <= ?"
+            params.append(end_time)
+        
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        
+        logs = []
+        for row in rows:
+            log_entry = dict(row)
+            if log_entry.get('metadata'):
+                log_entry['metadata'] = json.loads(log_entry['metadata'])
+            logs.append(log_entry)
+        
+        return logs
+
+
+def delete_old_logs(days: int = 30) -> int:
+    """
+    Delete logs older than specified days.
+    
+    Args:
+        days: Delete logs older than this many days
+        
+    Returns:
+        Number of logs deleted
+    """
+    from datetime import timedelta
+    cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM logs WHERE created_at < ?", (cutoff_date,))
+        deleted_count = cursor.rowcount
+        logger.info(f"🗑️ Deleted {deleted_count} logs older than {days} days")
+        return deleted_count
+
+
+def get_log_stats() -> Dict[str, Any]:
+    """
+    Get statistics about logs in the database.
+    
+    Returns:
+        Dictionary with log statistics
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Total logs
+        cursor.execute("SELECT COUNT(*) as total FROM logs")
+        total = cursor.fetchone()['total']
+        
+        # Logs by level
+        cursor.execute("""
+            SELECT log_level, COUNT(*) as count 
+            FROM logs 
+            GROUP BY log_level
+        """)
+        by_level = {row['log_level']: row['count'] for row in cursor.fetchall()}
+        
+        # Logs by type
+        cursor.execute("""
+            SELECT log_type, COUNT(*) as count 
+            FROM logs 
+            GROUP BY log_type
+        """)
+        by_type = {row['log_type']: row['count'] for row in cursor.fetchall()}
+        
+        # Recent logs (last 24 hours)
+        from datetime import timedelta
+        yesterday = (datetime.now() - timedelta(days=1)).isoformat()
+        cursor.execute("SELECT COUNT(*) as count FROM logs WHERE created_at >= ?", (yesterday,))
+        recent_count = cursor.fetchone()['count']
+        
+        return {
+            'total_logs': total,
+            'by_level': by_level,
+            'by_type': by_type,
+            'last_24_hours': recent_count
+        }
 
