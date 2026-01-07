@@ -18,9 +18,12 @@ import os
 import sys
 import asyncio
 import logging
+import time
+import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 # Setup logging
@@ -1868,6 +1871,90 @@ async def get_service_config(service_id: str):
 
 
 # ============================================================================
+# ADMIN ENDPOINTS
+# ============================================================================
+
+@app.post("/api/admin/run-analysis")
+async def trigger_manual_analysis(background_tasks: BackgroundTasks, test_mode: bool = False, test_limit: int = 10):
+    """
+    Manually trigger drift analysis for all active services.
+    
+    This endpoint runs the same analysis that runs on schedule,
+    but can be triggered manually for testing or on-demand analysis.
+    
+    The analysis runs in the background and does not block the response.
+    
+    Query Parameters:
+        - test_mode: If true, only analyze first `test_limit` services (default: false)
+        - test_limit: Number of services to analyze in test mode (default: 10)
+    
+    Returns:
+        - status: "started"
+        - message: Confirmation message
+        - estimated_time: Estimated completion time
+        - note: Additional information
+    """
+    try:
+        # Load config for estimation parameters
+        detailed_config_file = Path(__file__).parent / "config" / "vsat_config.yaml"
+        max_workers = 50  # Default
+        avg_time = 2  # Default
+        avg_envs = 4  # Default
+        
+        if detailed_config_file.exists():
+            with open(detailed_config_file, 'r') as f:
+                detailed_config = yaml.safe_load(f) or {}
+            sync_config = detailed_config.get('sync', {})
+            max_workers = sync_config.get('max_analysis_workers', 50)
+            avg_time = sync_config.get('avg_analysis_time_minutes', 2)
+            avg_envs = sync_config.get('avg_environments_per_service', 4)
+        
+        # Get count of active services for estimation
+        services = get_all_services(active_only=True, with_branches_only=False)
+        total_services = len(services)
+        
+        if total_services == 0:
+            return {
+                "status": "skipped",
+                "message": "No active services found",
+                "total_services": 0
+            }
+        
+        # Apply test mode limit for estimation
+        services_to_analyze = min(test_limit, total_services) if test_mode else total_services
+        
+        # Calculate estimated time from config
+        total_analyses = services_to_analyze * avg_envs
+        estimated_minutes = (total_analyses * avg_time) / max_workers
+        
+        # Run analysis in background
+        if test_mode:
+            background_tasks.add_task(scheduled_parallel_analysis, test_mode=True, test_limit=test_limit)
+            logger.info(f"🧪 TEST MODE: Manual analysis triggered via API for {services_to_analyze} services (limit: {test_limit})")
+        else:
+            background_tasks.add_task(scheduled_parallel_analysis)
+            logger.info(f"🎮 Manual analysis triggered via API for {total_services} services")
+        
+        return {
+            "status": "started",
+            "message": f"Analysis started for {services_to_analyze} active services" + (" (TEST MODE)" if test_mode else ""),
+            "test_mode": test_mode,
+            "total_services": total_services,
+            "services_to_analyze": services_to_analyze,
+            "estimated_analyses": total_analyses,
+            "estimated_time_minutes": round(estimated_minutes, 1),
+            "note": "Analysis is running in background. Check logs for progress."
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to trigger manual analysis: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to trigger analysis: {str(e)}"
+        )
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -1988,15 +2075,239 @@ def scheduled_vsat_sync():
         logger.error(f"❌ VSAT sync failed: {e}")
 
 
+def scheduled_parallel_analysis(test_mode: bool = False, test_limit: int = 10):
+    """
+    Run drift analysis for all active services in parallel.
+    Uses workers configured in vsat_config.yaml (max_analysis_workers).
+    
+    This function:
+    1. Gets all active services from database
+    2. Creates analysis tasks (service × environment)
+    3. Runs analyses in parallel with configured workers
+    4. Logs progress and handles errors gracefully
+    5. Provides completion summary
+    
+    Args:
+        test_mode: If True, only analyze first `test_limit` services (for testing)
+        test_limit: Number of services to analyze in test mode (default: 10)
+    """
+    logger.info("="*80)
+    if test_mode:
+        logger.info(f"🧪 TEST MODE: Parallel Analysis Starting (limit: {test_limit} services)")
+    else:
+        logger.info("⏰ Scheduled Parallel Analysis Starting")
+    logger.info("="*80)
+    
+    try:
+        # Load config for worker count
+        detailed_config_file = Path(__file__).parent / "config" / "vsat_config.yaml"
+        max_workers = 50  # Default fallback
+        
+        if detailed_config_file.exists():
+            with open(detailed_config_file, 'r') as f:
+                detailed_config = yaml.safe_load(f) or {}
+            sync_config = detailed_config.get('sync', {})
+            max_workers = sync_config.get('max_analysis_workers', 50)
+            logger.info(f"📊 Using {max_workers} parallel workers (from config)")
+        else:
+            logger.warning(f"⚠️  Config not found, using default: {max_workers} workers")
+        
+        # Get all active services from database
+        # Note: We get ALL active services, not just those with branches
+        # This ensures we attempt analysis for all services
+        services = get_all_services(active_only=True, with_branches_only=False)
+        
+        # Apply test mode limit if enabled
+        if test_mode and services:
+            original_count = len(services)
+            services = services[:test_limit]
+            logger.info(f"🧪 TEST MODE: Limited to {len(services)} services (out of {original_count} total)")
+        
+        if not services:
+            logger.info("ℹ️  No active services found - skipping analysis")
+            logger.info("="*80)
+            return
+        
+        total_services = len(services)
+        logger.info(f"📊 Found {total_services} active services")
+        
+        # Prepare all analysis tasks (service × environment combinations)
+        analysis_tasks = []
+        for service in services:
+            service_id = service['service_id']
+            service_name = service['service_name']
+            environments = service.get('environments', ['dev', 'beta1', 'beta2', 'prod'])
+            vsat = service.get('vsat', 'unknown')
+            
+            for env in environments:
+                analysis_tasks.append({
+                    'service_id': service_id,
+                    'service_name': service_name,
+                    'environment': env,
+                    'vsat': vsat,
+                    'repo_url': service['repo_url'],
+                    'main_branch': service['main_branch']
+                })
+        
+        total_tasks = len(analysis_tasks)
+        logger.info(f"📋 Total analyses to run: {total_tasks} ({total_services} services × environments)")
+        
+        # Counters for tracking progress
+        completed = 0
+        failed = 0
+        skipped = 0
+        
+        def run_single_analysis(task):
+            """
+            Run a single analysis task.
+            This function runs in a thread pool worker.
+            """
+            service_id = task['service_id']
+            env = task['environment']
+            
+            try:
+                # Check if service exists in SERVICES_CONFIG
+                if service_id not in SERVICES_CONFIG:
+                    logger.warning(f"⚠️  Service {service_id} not in SERVICES_CONFIG - skipping {env}")
+                    return {
+                        'success': False,
+                        'skipped': True,
+                        'service': service_id,
+                        'env': env,
+                        'error': 'not_in_config'
+                    }
+                
+                config = SERVICES_CONFIG[service_id]
+                
+                # Validate environment
+                if env not in config.get("environments", []):
+                    logger.warning(f"⚠️  Environment {env} not valid for {service_id} - skipping")
+                    return {
+                        'success': False,
+                        'skipped': True,
+                        'service': service_id,
+                        'env': env,
+                        'error': 'invalid_env'
+                    }
+                
+                logger.info(f"🔍 Analyzing {service_id} ({env})")
+                
+                # Create validation request
+                from pydantic import BaseModel
+                
+                # Build request object
+                request_data = {
+                    "repo_url": config["repo_url"],
+                    "main_branch": config["main_branch"],
+                    "environment": env,
+                    "target_folder": "",
+                    "project_id": f"{service_id}_{env}",
+                    "mr_iid": f"{service_id}_{env}_scheduled_{int(datetime.now().timestamp())}"
+                }
+                
+                # Create ValidationRequest instance
+                request = ValidationRequest(**request_data)
+                
+                # Run analysis (async function in sync context)
+                # We need to create a new event loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                try:
+                    # Create a BackgroundTasks instance for the analysis
+                    background_tasks = BackgroundTasks()
+                    
+                    # Run the async validate_configuration function
+                    result = loop.run_until_complete(
+                        validate_configuration(request, background_tasks)
+                    )
+                    
+                    # Store result
+                    store_service_result(service_id, env, result)
+                    
+                    logger.info(f"✅ Completed {service_id} ({env})")
+                    
+                    return {
+                        'success': True,
+                        'skipped': False,
+                        'service': service_id,
+                        'env': env
+                    }
+                    
+                finally:
+                    loop.close()
+                
+            except Exception as e:
+                logger.error(f"❌ Analysis failed for {service_id} ({env}): {e}")
+                return {
+                    'success': False,
+                    'skipped': False,
+                    'service': service_id,
+                    'env': env,
+                    'error': str(e)
+                }
+        
+        # Run analyses in parallel with configured workers
+        logger.info(f"🚀 Starting parallel execution with {max_workers} workers...")
+        start_time = time.time()
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            futures = {
+                executor.submit(run_single_analysis, task): task 
+                for task in analysis_tasks
+            }
+            
+            # Process results as they complete
+            for future in as_completed(futures):
+                result = future.result()
+                
+                if result.get('skipped'):
+                    skipped += 1
+                elif result['success']:
+                    completed += 1
+                else:
+                    failed += 1
+                
+                # Log progress every 50 analyses
+                total_processed = completed + failed + skipped
+                if total_processed % 50 == 0:
+                    progress = (total_processed / total_tasks) * 100
+                    elapsed = time.time() - start_time
+                    logger.info(
+                        f"📊 Progress: {total_processed}/{total_tasks} ({progress:.1f}%) | "
+                        f"✅ {completed} | ❌ {failed} | ⏭️ {skipped} | "
+                        f"⏱️ {elapsed/60:.1f} min"
+                    )
+        
+        duration = time.time() - start_time
+        
+        # Final summary
+        logger.info("="*80)
+        logger.info("✅ Scheduled Parallel Analysis Complete!")
+        logger.info(f"   Total tasks: {total_tasks}")
+        logger.info(f"   Completed: {completed}")
+        logger.info(f"   Failed: {failed}")
+        logger.info(f"   Skipped: {skipped}")
+        logger.info(f"   Duration: {duration/60:.1f} minutes")
+        logger.info(f"   Average: {duration/total_tasks:.1f} seconds per analysis")
+        logger.info("="*80)
+        
+    except Exception as e:
+        logger.error(f"❌ Scheduled analysis failed: {e}")
+        logger.error("="*80)
+
+
 def start_vsat_automation():
     """Start VSAT scheduler and file watcher"""
     global scheduler, config_observer
     
-    vsat_config = Path(__file__).parent / "config" / "vsat_master.yaml"
+    vsat_config_file = Path(__file__).parent / "config" / "vsat_master.yaml"
+    detailed_config_file = Path(__file__).parent / "config" / "vsat_config.yaml"
     
-    if not vsat_config.exists():
+    if not vsat_config_file.exists():
         logger.info("ℹ️  VSAT config not found - automation disabled")
-        logger.info(f"   Create {vsat_config} to enable auto-discovery")
+        logger.info(f"   Create {vsat_config_file} to enable auto-discovery")
         return
     
     try:
@@ -2004,26 +2315,285 @@ def start_vsat_automation():
         logger.info("🚀 VSAT Automation Starting")
         logger.info("="*80)
         
+        # Load schedule configuration from vsat_config.yaml
+        sync_schedule = None
+        analysis_schedule = None
+        
+        if not detailed_config_file.exists():
+            logger.error(f"❌ VSAT config file not found: {detailed_config_file}")
+            logger.error("   Automation cannot start without configuration")
+            logger.error(f"   Please create {detailed_config_file} with schedule configuration")
+            return
+        
+        import yaml
+        with open(detailed_config_file, 'r') as f:
+            detailed_config = yaml.safe_load(f) or {}
+        
+        sync_config = detailed_config.get('sync', {})
+        
+        # Get VSAT sync schedule (required)
+        sync_schedule_str = sync_config.get('schedule') or sync_config.get('weekly_schedule')
+        
+        if not sync_schedule_str:
+            logger.error("❌ No schedule found in config file")
+            logger.error("   Please add 'sync.schedule' to config/vsat_config.yaml")
+            logger.error("   Example: schedule: '2,14' (for 2 AM and 2 PM)")
+            return
+        
+        # Get analysis schedule (optional - will be auto-calculated if not provided)
+        analysis_schedule_str = sync_config.get('analysis_schedule', None)
+        
+        logger.info(f"📅 Loaded schedule from config: sync='{sync_schedule_str}'")
+        if analysis_schedule_str:
+            logger.info(f"📅 Loaded analysis schedule from config: '{analysis_schedule_str}'")
+        
+        # Parse schedule string - supports multiple formats
+        if ' ' in sync_schedule_str:
+            # Cron format: "minute hour day_of_week"
+            # Examples: "0 2 0" (Sunday 2 AM), "37 3 *" (daily 3:37 AM), "30 14 1,3,5" (Mon/Wed/Fri 2:30 PM)
+            parts = sync_schedule_str.split()
+            if len(parts) == 3:
+                minute, hour, day_of_week = parts
+                
+                # Build cron trigger dict
+                sync_schedule = {}
+                
+                # Handle minute
+                if minute == '*':
+                    sync_schedule['minute'] = '*'
+                else:
+                    sync_schedule['minute'] = int(minute)
+                
+                # Handle hour
+                if hour == '*':
+                    sync_schedule['hour'] = '*'
+                else:
+                    sync_schedule['hour'] = int(hour)
+                
+                # Handle day_of_week
+                if day_of_week != '*':
+                    sync_schedule['day_of_week'] = day_of_week  # Can be "0", "1,3,5", "*/2", "1-5", etc.
+                
+                # Analysis runs 1 hour after sync
+                if not analysis_schedule_str:
+                    analysis_schedule = {}
+                    
+                    # Handle minute for analysis
+                    if minute == '*':
+                        analysis_schedule['minute'] = '*'
+                    else:
+                        analysis_schedule['minute'] = int(minute)
+                    
+                    # Handle hour for analysis (add 1 hour)
+                    if hour == '*':
+                        analysis_schedule['hour'] = '*'
+                    else:
+                        analysis_hour = (int(hour) + 1) % 24
+                        analysis_schedule['hour'] = analysis_hour
+                    
+                    # Copy day_of_week
+                    if day_of_week != '*':
+                        analysis_schedule['day_of_week'] = day_of_week
+                    
+                    analysis_hour_display = analysis_schedule.get('hour', hour)
+                    logger.info(f"📅 Auto-calculated analysis schedule: '{minute} {analysis_hour_display} {day_of_week}' (1 hour after sync)")
+            else:
+                logger.error(f"❌ Invalid cron format: '{sync_schedule_str}'")
+                logger.error("   Expected: 'minute hour day_of_week' (e.g., '37 3 *' or '0 2 1,3,5')")
+                return
+        elif ':' in sync_schedule_str:
+            # Hour:Minute format: "3:37" or "3:37,15:45"
+            # Examples: "3:37" (daily 3:37 AM), "3:37,15:45" (3:37 AM and 3:45 PM)
+            times = sync_schedule_str.split(',')
+            hours = []
+            minutes = []
+            
+            for time_str in times:
+                if ':' in time_str:
+                    h, m = time_str.strip().split(':')
+                    hours.append(int(h))
+                    minutes.append(int(m))
+                else:
+                    logger.error(f"❌ Invalid time format: '{time_str}'")
+                    logger.error("   Expected: 'hour:minute' (e.g., '3:37')")
+                    return
+            
+            # Check if all times have same minute value
+            if len(set(minutes)) == 1:
+                # All same minute - can use single minute value
+                sync_schedule = {'hour': ','.join(str(h) for h in hours), 'minute': minutes[0]}
+            else:
+                # Different minutes - need multiple cron jobs (not supported yet, use first time only)
+                logger.warning(f"⚠️  Multiple times with different minutes not fully supported")
+                logger.warning(f"   Using first time only: {hours[0]}:{minutes[0]}")
+                sync_schedule = {'hour': hours[0], 'minute': minutes[0]}
+            
+            # Analysis runs 1 hour after sync
+            if not analysis_schedule_str:
+                analysis_hours = [(h + 1) % 24 for h in hours]
+                if len(set(minutes)) == 1:
+                    analysis_schedule = {'hour': ','.join(str(h) for h in analysis_hours), 'minute': minutes[0]}
+                else:
+                    analysis_schedule = {'hour': analysis_hours[0], 'minute': minutes[0]}
+                logger.info(f"📅 Auto-calculated analysis schedule: {','.join(f'{h}:{minutes[0]}' for h in analysis_hours)} (1 hour after sync)")
+        elif ',' in sync_schedule_str:
+            # Comma-separated hours: "2,14" means hours 2 and 14 (2 AM, 2 PM)
+            sync_schedule = {'hour': sync_schedule_str, 'minute': 0}
+            # Analysis runs 1 hour after sync by default
+            if not analysis_schedule_str:
+                hours = [int(h.strip()) for h in sync_schedule_str.split(',')]
+                analysis_hours = ','.join(str((h + 1) % 24) for h in hours)
+                analysis_schedule = {'hour': analysis_hours, 'minute': 0}
+                logger.info(f"📅 Auto-calculated analysis schedule: '{analysis_hours}' (1 hour after sync)")
+        else:
+            # Single hour: "3" means 3 AM
+            sync_schedule = {'hour': sync_schedule_str, 'minute': 0}
+            if not analysis_schedule_str:
+                analysis_hour = (int(sync_schedule_str) + 1) % 24
+                analysis_schedule = {'hour': str(analysis_hour), 'minute': 0}
+                logger.info(f"📅 Auto-calculated analysis schedule: '{analysis_hour}' (1 hour after sync)")
+        
+        # Parse analysis schedule if provided (supports same formats as sync schedule)
+        if analysis_schedule_str:
+            if ' ' in analysis_schedule_str:
+                # Cron format: "minute hour day_of_week"
+                parts = analysis_schedule_str.split()
+                if len(parts) == 3:
+                    minute, hour, day_of_week = parts
+                    analysis_schedule = {}
+                    
+                    # Handle minute
+                    if minute == '*':
+                        analysis_schedule['minute'] = '*'
+                    else:
+                        analysis_schedule['minute'] = int(minute)
+                    
+                    # Handle hour
+                    if hour == '*':
+                        analysis_schedule['hour'] = '*'
+                    else:
+                        analysis_schedule['hour'] = int(hour)
+                    
+                    # Handle day_of_week
+                    if day_of_week != '*':
+                        analysis_schedule['day_of_week'] = day_of_week
+                else:
+                    logger.error(f"❌ Invalid analysis cron format: '{analysis_schedule_str}'")
+                    logger.error("   Expected: 'minute hour day_of_week' (e.g., '37 4 *')")
+                    return
+            elif ':' in analysis_schedule_str:
+                # Hour:Minute format: "3:37" or "3:37,15:45"
+                times = analysis_schedule_str.split(',')
+                hours = []
+                minutes = []
+                
+                for time_str in times:
+                    if ':' in time_str:
+                        h, m = time_str.strip().split(':')
+                        hours.append(int(h))
+                        minutes.append(int(m))
+                
+                if len(set(minutes)) == 1:
+                    analysis_schedule = {'hour': ','.join(str(h) for h in hours), 'minute': minutes[0]}
+                else:
+                    analysis_schedule = {'hour': hours[0], 'minute': minutes[0]}
+            elif ',' in analysis_schedule_str:
+                # Comma-separated hours
+                analysis_schedule = {'hour': analysis_schedule_str, 'minute': 0}
+            else:
+                # Single hour
+                analysis_schedule = {'hour': analysis_schedule_str, 'minute': 0}
+        
         scheduler = BackgroundScheduler()
+        
+        # VSAT Sync: Schedule from config
         scheduler.add_job(
             scheduled_vsat_sync,
-            CronTrigger(day_of_week='sun', hour=2, minute=0),
-            id='weekly_vsat_sync',
+            CronTrigger(**sync_schedule),
+            id='vsat_sync',
             replace_existing=True
         )
+        
+        # Format schedule for logging
+        if 'day_of_week' in sync_schedule:
+            day_of_week_val = sync_schedule['day_of_week']
+            hour_val = sync_schedule.get('hour', '*')
+            minute_val = sync_schedule.get('minute', 0)
+            
+            # Format minute for display
+            if isinstance(minute_val, int):
+                minute_str = f":{minute_val:02d}"
+            else:
+                minute_str = ""
+            
+            # Format day of week for display
+            if day_of_week_val.isdigit():
+                # Single day: "0" -> "Sun"
+                days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+                day_name = days[int(day_of_week_val)]
+                logger.info(f"✅ Scheduler: VSAT sync weekly ({day_name} {hour_val}{minute_str})")
+            else:
+                # Multiple days or pattern: "1,3,5", "*/2", "1-5"
+                logger.info(f"✅ Scheduler: VSAT sync at {hour_val}{minute_str} on days {day_of_week_val}")
+        else:
+            hour_val = sync_schedule.get('hour', '*')
+            minute_val = sync_schedule.get('minute', 0)
+            
+            if isinstance(minute_val, int) and minute_val != 0:
+                logger.info(f"✅ Scheduler: VSAT sync at hours {hour_val} (minute: {minute_val})")
+            else:
+                logger.info(f"✅ Scheduler: VSAT sync at hours {hour_val}")
+        
+        # Analysis: Schedule from config (1 hour after sync)
+        scheduler.add_job(
+            scheduled_parallel_analysis,
+            CronTrigger(**analysis_schedule),
+            id='analysis',
+            replace_existing=True
+        )
+        
+        # Format analysis schedule for logging
+        if 'day_of_week' in analysis_schedule:
+            day_of_week_val = analysis_schedule['day_of_week']
+            hour_val = analysis_schedule.get('hour', '*')
+            minute_val = analysis_schedule.get('minute', 0)
+            
+            # Format minute for display
+            if isinstance(minute_val, int):
+                minute_str = f":{minute_val:02d}"
+            else:
+                minute_str = ""
+            
+            # Format day of week for display
+            if day_of_week_val.isdigit():
+                # Single day: "0" -> "Sun"
+                days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+                day_name = days[int(day_of_week_val)]
+                logger.info(f"✅ Scheduler: Analysis weekly ({day_name} {hour_val}{minute_str})")
+            else:
+                # Multiple days or pattern: "1,3,5", "*/2", "1-5"
+                logger.info(f"✅ Scheduler: Analysis at {hour_val}{minute_str} on days {day_of_week_val}")
+        else:
+            hour_val = analysis_schedule.get('hour', '*')
+            minute_val = analysis_schedule.get('minute', 0)
+            
+            if isinstance(minute_val, int) and minute_val != 0:
+                logger.info(f"✅ Scheduler: Analysis at hours {hour_val} (minute: {minute_val})")
+            else:
+                logger.info(f"✅ Scheduler: Analysis at hours {hour_val}")
+        
         scheduler.start()
-        logger.info("✅ Scheduler: Weekly sync (Sunday 2 AM)")
         
         config_observer = Observer()
         config_observer.schedule(
             VSATConfigFileHandler(),
-            str(vsat_config.parent),
+            str(vsat_config_file.parent),
             recursive=False
         )
         config_observer.start()
         logger.info("✅ File watcher: Monitoring config files (vsat_master.yaml, vsat_config.yaml)")
         
-        # Initial sync
+        # Initial sync (VSAT only, NOT analysis)
         logger.info("🔄 Running initial VSAT sync...")
         try:
             from scripts.vsat_sync import run_sync
@@ -2034,6 +2604,37 @@ def start_vsat_automation():
                 logger.info("✅ Config unchanged - sync skipped")
         except Exception as e:
             logger.warning(f"⚠️  Initial sync failed: {e}")
+        
+        # Analysis will run on schedule only (NOT on startup)
+        if 'day_of_week' in analysis_schedule:
+            day_of_week_val = analysis_schedule['day_of_week']
+            hour_val = analysis_schedule.get('hour', '*')
+            minute_val = analysis_schedule.get('minute', 0)
+            
+            # Format minute for display
+            if isinstance(minute_val, int):
+                minute_str = f":{minute_val:02d}"
+            else:
+                minute_str = ""
+            
+            # Format day of week for display
+            if day_of_week_val.isdigit():
+                # Single day: "0" -> "Sun"
+                days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+                day_name = days[int(day_of_week_val)]
+                logger.info(f"ℹ️  Drift analysis will run on schedule ({day_name} {hour_val}{minute_str})")
+            else:
+                # Multiple days or pattern: "1,3,5", "*/2", "1-5"
+                logger.info(f"ℹ️  Drift analysis will run on schedule ({hour_val}{minute_str} on days {day_of_week_val})")
+        else:
+            hour_val = analysis_schedule.get('hour', '*')
+            minute_val = analysis_schedule.get('minute', 0)
+            
+            if isinstance(minute_val, int) and minute_val != 0:
+                logger.info(f"ℹ️  Drift analysis will run on schedule (hours: {hour_val}, minute: {minute_val})")
+            else:
+                logger.info(f"ℹ️  Drift analysis will run on schedule (hours: {hour_val})")
+        logger.info("ℹ️  To trigger manually: POST /api/admin/run-analysis")
         
         logger.info("="*80)
             
