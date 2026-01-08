@@ -265,7 +265,6 @@ class InferenceRequest(BaseModel):
 
 # Global state
 latest_results: Optional[Dict[str, Any]] = None
-validation_in_progress: bool = False
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -356,10 +355,8 @@ async def api_info():
 @app.get("/api/validation-status")
 async def validation_status():
     """Check if validation is in progress"""
-    global validation_in_progress
-    
     return {
-        "in_progress": validation_in_progress,
+        "in_progress": False,  # Lock removed - multiple validations can run in parallel
         "has_results": latest_results is not None,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
@@ -377,13 +374,7 @@ async def validate_configuration(request: ValidationRequest, background_tasks: B
     
     Returns file paths to analysis results.
     """
-    global validation_in_progress, latest_results
-    
-    if validation_in_progress:
-        raise HTTPException(
-            status_code=409,
-            detail="Validation already in progress. Please wait for completion."
-        )
+    global latest_results
     
     print("=" * 80)
     print("🚀 MULTI-AGENT VALIDATION REQUEST")
@@ -397,7 +388,6 @@ async def validate_configuration(request: ValidationRequest, background_tasks: B
     print("=" * 80)
     
     try:
-        validation_in_progress = True
         start_time = datetime.now()
         
         # Generate MR ID if auto
@@ -494,7 +484,8 @@ async def validate_configuration(request: ValidationRequest, background_tasks: B
         raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
     
     finally:
-        validation_in_progress = False
+        # Lock removed - no cleanup needed
+        pass
 
 
 @app.post("/api/analyze/quick")
@@ -1736,7 +1727,7 @@ async def health_check():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "2.0.0",
         "architecture": "supervisor_orchestration",
-        "validation_in_progress": validation_in_progress,
+        "validation_in_progress": False,  # Lock removed - parallel execution enabled
         "has_results": latest_results is not None
     }
 
