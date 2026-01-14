@@ -1843,6 +1843,78 @@ async def delete_service_endpoint(service_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to deactivate service: {str(e)}")
 
 
+@app.get("/api/logs")
+async def get_logs_endpoint(
+    log_level: Optional[str] = None,
+    log_type: Optional[str] = None,
+    run_id: Optional[str] = None,
+    service_name: Optional[str] = None,
+    environment: Optional[str] = None,
+    vsat: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    limit: int = 1000
+):
+    """
+    Query logs from database with optional filters.
+    
+    Useful for reviewing detailed logs from parallel analysis runs.
+    
+    Query parameters:
+    - log_level: Filter by log level (DEBUG, INFO, WARNING, ERROR)
+    - log_type: Filter by log type (parallel_analysis, system, vsat_sync, etc.)
+    - run_id: Filter by validation run ID
+    - service_name: Filter by service name
+    - environment: Filter by environment (prod, alpha, beta1, beta2)
+    - vsat: Filter by VSAT
+    - start_time: Filter logs after this timestamp (ISO format)
+    - end_time: Filter logs before this timestamp (ISO format)
+    - limit: Maximum number of logs to return (default: 1000, max: 10000)
+    
+    Examples:
+    - GET /api/logs?log_type=parallel_analysis&limit=100
+    - GET /api/logs?service_name=saja9l7_cxp-ptg-adapter&environment=beta2
+    - GET /api/logs?run_id=run_20260108_132510_...
+    """
+    try:
+        from shared.db import get_logs
+        
+        # Limit maximum to prevent excessive queries
+        if limit > 10000:
+            limit = 10000
+        
+        logs = get_logs(
+            log_level=log_level,
+            log_type=log_type,
+            run_id=run_id,
+            service_name=service_name,
+            environment=environment,
+            vsat=vsat,
+            start_time=start_time,
+            end_time=end_time,
+            limit=limit
+        )
+        
+        return {
+            "status": "success",
+            "count": len(logs),
+            "limit": limit,
+            "filters": {
+                "log_level": log_level,
+                "log_type": log_type,
+                "run_id": run_id,
+                "service_name": service_name,
+                "environment": environment,
+                "vsat": vsat,
+                "start_time": start_time,
+                "end_time": end_time
+            },
+            "logs": logs
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to query logs: {str(e)}")
+
+
 @app.get("/api/services/{service_id}/config")
 async def get_service_config(service_id: str):
     """Get detailed configuration for a specific service."""
@@ -2078,6 +2150,10 @@ def scheduled_parallel_analysis(test_mode: bool = False, test_limit: int = 10):
     4. Logs progress and handles errors gracefully
     5. Provides completion summary
     
+    During parallel execution:
+    - Detailed logs are saved to database (for per-service review)
+    - Terminal shows only clean summary (progress, results)
+    
     Args:
         test_mode: If True, only analyze first `test_limit` services (for testing)
         test_limit: Number of services to analyze in test mode (default: 10)
@@ -2088,6 +2164,11 @@ def scheduled_parallel_analysis(test_mode: bool = False, test_limit: int = 10):
     else:
         logger.info("⏰ Scheduled Parallel Analysis Starting")
     logger.info("="*80)
+    
+    # Enable database logging and suppress detailed terminal output during parallel runs
+    # This prevents log interleaving and makes terminal output readable
+    from shared.logging_config import enable_parallel_mode_logging, disable_parallel_mode_logging
+    db_handler = enable_parallel_mode_logging()
     
     try:
         # Load config for worker count
@@ -2155,11 +2236,21 @@ def scheduled_parallel_analysis(test_mode: bool = False, test_limit: int = 10):
             """
             service_id = task['service_id']
             env = task['environment']
+            vsat = task.get('vsat', 'unknown')
+            
+            # Add context to all logs in this thread
+            # This allows database handler to tag logs with service/env
+            import logging
+            thread_logger = logging.LoggerAdapter(logger, {
+                'service_name': service_id,
+                'environment': env,
+                'vsat': vsat
+            })
             
             try:
                 # Check if service exists in SERVICES_CONFIG
                 if service_id not in SERVICES_CONFIG:
-                    logger.warning(f"⚠️  Service {service_id} not in SERVICES_CONFIG - skipping {env}")
+                    # Only show in terminal for skipped services (not detailed logs)
                     return {
                         'success': False,
                         'skipped': True,
@@ -2172,7 +2263,6 @@ def scheduled_parallel_analysis(test_mode: bool = False, test_limit: int = 10):
                 
                 # Validate environment
                 if env not in config.get("environments", []):
-                    logger.warning(f"⚠️  Environment {env} not valid for {service_id} - skipping")
                     return {
                         'success': False,
                         'skipped': True,
@@ -2180,8 +2270,6 @@ def scheduled_parallel_analysis(test_mode: bool = False, test_limit: int = 10):
                         'env': env,
                         'error': 'invalid_env'
                     }
-                
-                logger.info(f"🔍 Analyzing {service_id} ({env})")
                 
                 # Create validation request
                 from pydantic import BaseModel
@@ -2216,20 +2304,25 @@ def scheduled_parallel_analysis(test_mode: bool = False, test_limit: int = 10):
                     # Store result
                     store_service_result(service_id, env, result)
                     
-                    logger.info(f"✅ Completed {service_id} ({env})")
-                    
+                    # Success - detailed logs already in database
                     return {
                         'success': True,
                         'skipped': False,
                         'service': service_id,
-                        'env': env
+                        'env': env,
+                        'verdict': result.get('verdict', 'UNKNOWN')
                     }
                     
                 finally:
                     loop.close()
                 
             except Exception as e:
-                logger.error(f"❌ Analysis failed for {service_id} ({env}): {e}")
+                # Error - log to database with context
+                thread_logger.error(f"Analysis failed: {e}", extra={
+                    'service_name': service_id,
+                    'environment': env,
+                    'vsat': vsat
+                })
                 return {
                     'success': False,
                     'skipped': False,
@@ -2240,7 +2333,12 @@ def scheduled_parallel_analysis(test_mode: bool = False, test_limit: int = 10):
         
         # Run analyses in parallel with configured workers
         logger.info(f"🚀 Starting parallel execution with {max_workers} workers...")
+        logger.info(f"📊 Detailed logs being saved to database...")
+        logger.info("")
         start_time = time.time()
+        
+        # Track results by service for summary
+        results_by_service = {}
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
@@ -2252,6 +2350,13 @@ def scheduled_parallel_analysis(test_mode: bool = False, test_limit: int = 10):
             # Process results as they complete
             for future in as_completed(futures):
                 result = future.result()
+                service_id = result['service']
+                env = result['env']
+                
+                # Track result
+                if service_id not in results_by_service:
+                    results_by_service[service_id] = {}
+                results_by_service[service_id][env] = result
                 
                 if result.get('skipped'):
                     skipped += 1
@@ -2260,33 +2365,74 @@ def scheduled_parallel_analysis(test_mode: bool = False, test_limit: int = 10):
                 else:
                     failed += 1
                 
-                # Log progress every 50 analyses
+                # Show clean progress bar every 10 analyses (not every single one)
                 total_processed = completed + failed + skipped
-                if total_processed % 50 == 0:
+                if total_processed % 10 == 0 or total_processed == total_tasks:
                     progress = (total_processed / total_tasks) * 100
                     elapsed = time.time() - start_time
-                    logger.info(
-                        f"📊 Progress: {total_processed}/{total_tasks} ({progress:.1f}%) | "
-                        f"✅ {completed} | ❌ {failed} | ⏭️ {skipped} | "
-                        f"⏱️ {elapsed/60:.1f} min"
-                    )
+                    
+                    # Clean progress bar
+                    bar_length = 40
+                    filled = int(bar_length * progress / 100)
+                    bar = '█' * filled + '░' * (bar_length - filled)
+                    
+                    print(f"\r📊 Progress: [{bar}] {progress:5.1f}% | "
+                          f"✅ {completed:3d} | ❌ {failed:3d} | ⏭️ {skipped:3d} | "
+                          f"⏱️ {elapsed/60:5.1f}m", end='', flush=True)
+        
+        # New line after progress bar
+        print()
         
         duration = time.time() - start_time
         
-        # Final summary
+        # Final summary with per-service breakdown
+        logger.info("")
         logger.info("="*80)
         logger.info("✅ Scheduled Parallel Analysis Complete!")
+        logger.info("="*80)
+        logger.info(f"📊 Overall Statistics:")
         logger.info(f"   Total tasks: {total_tasks}")
-        logger.info(f"   Completed: {completed}")
-        logger.info(f"   Failed: {failed}")
-        logger.info(f"   Skipped: {skipped}")
-        logger.info(f"   Duration: {duration/60:.1f} minutes")
-        logger.info(f"   Average: {duration/total_tasks:.1f} seconds per analysis")
+        logger.info(f"   ✅ Completed: {completed}")
+        logger.info(f"   ❌ Failed: {failed}")
+        logger.info(f"   ⏭️  Skipped: {skipped}")
+        logger.info(f"   ⏱️  Duration: {duration/60:.1f} minutes")
+        logger.info(f"   ⚡ Average: {duration/total_tasks:.1f} seconds per analysis")
+        logger.info("")
+        
+        # Show per-service summary
+        logger.info("📋 Per-Service Results:")
+        logger.info("-" * 80)
+        for service_id in sorted(results_by_service.keys()):
+            envs = results_by_service[service_id]
+            env_results = []
+            for env in ['prod', 'alpha', 'beta1', 'beta2']:  # Standard order
+                if env in envs:
+                    r = envs[env]
+                    if r.get('skipped'):
+                        env_results.append(f"{env}:⏭️")
+                    elif r['success']:
+                        verdict = r.get('verdict', '?')
+                        symbol = "✅" if verdict == "PASS" else "⚠️" if verdict == "WARN" else "❌"
+                        env_results.append(f"{env}:{symbol}")
+                    else:
+                        env_results.append(f"{env}:❌")
+            
+            logger.info(f"   {service_id:40s} | {' '.join(env_results)}")
+        
+        logger.info("-" * 80)
+        logger.info("")
+        logger.info(f"📊 Detailed logs saved to database (log_type='parallel_analysis')")
+        logger.info(f"   View logs: GET /api/logs?log_type=parallel_analysis")
+        logger.info(f"   Filter by service: GET /api/logs?service_name=<service_id>")
         logger.info("="*80)
         
     except Exception as e:
         logger.error(f"❌ Scheduled analysis failed: {e}")
         logger.error("="*80)
+    
+    finally:
+        # Restore normal logging mode
+        disable_parallel_mode_logging(db_handler)
 
 
 def start_vsat_automation():

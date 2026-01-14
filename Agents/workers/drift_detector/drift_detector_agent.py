@@ -241,24 +241,24 @@ Execute the analysis now.
             logger.info("✅ Agent completed execution")
             
             # Debug: Inspect agent response structure
-            logger.info(f"🔍 DEBUG: Agent response type: {type(agent_response)}")
+            logger.debug(f"🔍 DEBUG: Agent response type: {type(agent_response)}")
             if hasattr(agent_response, 'structured_output'):
-                logger.info(f"🔍 DEBUG: structured_output type: {type(agent_response.structured_output)}")
+                logger.debug(f"🔍 DEBUG: structured_output type: {type(agent_response.structured_output)}")
                 if isinstance(agent_response.structured_output, list):
-                    logger.info(f"🔍 DEBUG: structured_output length: {len(agent_response.structured_output)}")
+                    logger.debug(f"🔍 DEBUG: structured_output length: {len(agent_response.structured_output)}")
                     if len(agent_response.structured_output) > 0:
-                        logger.info(f"🔍 DEBUG: Last tool result type: {type(agent_response.structured_output[-1])}")
+                        logger.debug(f"🔍 DEBUG: Last tool result type: {type(agent_response.structured_output[-1])}")
             
             # PRIORITY: Check if tool stored result directly in instance variable
             if self._last_tool_result is not None:
-                logger.info("✅ Retrieved result from instance variable (tool stored it directly)")
+                logger.debug("✅ Retrieved result from instance variable (tool stored it directly)")
                 result_data = self._last_tool_result
-                logger.info(f"🔍 DEBUG: result_data keys: {list(result_data.keys()) if isinstance(result_data, dict) else 'NOT A DICT'}")
+                logger.debug(f"🔍 DEBUG: result_data keys: {list(result_data.keys()) if isinstance(result_data, dict) else 'NOT A DICT'}")
             else:
                 # Fall back to parsing the agent's response
-                logger.info("ℹ️ No instance variable result, parsing agent response...")
+                logger.debug("ℹ️ No instance variable result, parsing agent response...")
                 result_data = self._parse_agent_response(agent_response)
-                logger.info(f"🔍 DEBUG: Parsed result_data keys: {list(result_data.keys()) if isinstance(result_data, dict) else 'NOT A DICT'}")
+                logger.debug(f"🔍 DEBUG: Parsed result_data keys: {list(result_data.keys()) if isinstance(result_data, dict) else 'NOT A DICT'}")
             
             # Validate we got the expected output
             if not isinstance(result_data, dict):
@@ -288,8 +288,8 @@ Execute the analysis now.
             bundle_data = result_data.get('bundle_data')
             summary = result_data.get('summary', {})
             
-            logger.info(f"🔍 DEBUG: bundle_data present: {bundle_data is not None}")
-            logger.info(f"🔍 DEBUG: summary present: {summary is not None}")
+            logger.debug(f"🔍 DEBUG: bundle_data present: {bundle_data is not None}")
+            logger.debug(f"🔍 DEBUG: summary present: {summary is not None}")
             
             if not bundle_data:
                 logger.error(f"❌ bundle_data is None. result_data keys: {list(result_data.keys())}")

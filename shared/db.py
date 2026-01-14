@@ -6,6 +6,7 @@ Uses SQLite for persistent storage of all validation data.
 import sqlite3
 import json
 import logging
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
@@ -17,29 +18,142 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).parent.parent
 DB_PATH = PROJECT_ROOT / "config_data" / "golden_config.db"
 
+# Database connection settings for multi-user access
+DB_TIMEOUT = 30.0  # Timeout in seconds (increased from default 5.0)
+MAX_RETRIES = 5  # Maximum number of retries for locked database
+RETRY_DELAY_BASE = 0.1  # Base delay for exponential backoff (seconds)
+
 
 @contextmanager
-def get_db_connection():
-    """Get database connection with context manager."""
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row  # Enable column access by name
-    try:
-        yield conn
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Database error: {e}")
-        raise
-    finally:
-        conn.close()
+def get_db_connection(retries: int = MAX_RETRIES):
+    """
+    Get database connection with context manager.
+    
+    Features:
+    - Increased timeout (30 seconds) for busy database
+    - WAL (Write-Ahead Logging) mode enabled for better concurrency
+    - Automatic retry with exponential backoff on database locked errors
+    - busy_timeout PRAGMA for additional lock handling
+    
+    Args:
+        retries: Number of retry attempts for locked database (default: MAX_RETRIES)
+    """
+    last_error = None
+    
+    for attempt in range(retries + 1):
+        conn = None
+        try:
+            # Connect with increased timeout for multi-user scenarios
+            conn = sqlite3.connect(
+                str(DB_PATH),
+                timeout=DB_TIMEOUT,
+                check_same_thread=False  # Allow connections from different threads
+            )
+            conn.row_factory = sqlite3.Row  # Enable column access by name
+            
+            # Enable WAL mode for better concurrency (allows multiple readers + 1 writer)
+            # This is critical for multi-user access on the same database file
+            conn.execute("PRAGMA journal_mode=WAL")
+            
+            # Set busy timeout at SQLite level (in milliseconds)
+            # This provides additional protection beyond the connection timeout
+            conn.execute(f"PRAGMA busy_timeout={int(DB_TIMEOUT * 1000)}")
+            
+            # Yield the connection to the caller
+            try:
+                yield conn
+                conn.commit()
+                return  # Success - exit function
+                
+            except sqlite3.OperationalError as e:
+                error_msg = str(e).lower()
+                if ("database is locked" in error_msg or "database is busy" in error_msg) and attempt < retries:
+                    # Database locked - retry with backoff
+                    conn.rollback()
+                    last_error = e
+                    delay = RETRY_DELAY_BASE * (2 ** attempt)
+                    logger.warning(
+                        f"Database locked (attempt {attempt + 1}/{retries + 1}), "
+                        f"retrying in {delay:.2f}s... Error: {e}"
+                    )
+                    time.sleep(delay)
+                    # Continue to next iteration
+                else:
+                    # Not a locking issue or out of retries
+                    conn.rollback()
+                    raise
+                    
+            except Exception as e:
+                # Non-locking error - rollback and re-raise immediately
+                conn.rollback()
+                logger.error(f"Database error: {e}")
+                raise
+                
+        except sqlite3.OperationalError as e:
+            # Error during connection establishment
+            error_msg = str(e).lower()
+            if ("database is locked" in error_msg or "database is busy" in error_msg) and attempt < retries:
+                last_error = e
+                delay = RETRY_DELAY_BASE * (2 ** attempt)
+                logger.warning(
+                    f"Database locked during connection (attempt {attempt + 1}/{retries + 1}), "
+                    f"retrying in {delay:.2f}s... Error: {e}"
+                )
+                time.sleep(delay)
+                # Continue to next iteration
+            else:
+                # Not a locking issue or out of retries
+                logger.error(f"Database connection error: {e}")
+                raise
+                
+        except Exception as e:
+            # Unexpected error during connection
+            logger.error(f"Unexpected database error: {e}")
+            raise
+            
+        finally:
+            # Always close the connection when exiting the context
+            if conn:
+                try:
+                    conn.close()
+                except Exception as e:
+                    logger.warning(f"Error closing connection: {e}")
+    
+    # If we get here, all retries failed
+    if last_error:
+        logger.error(f"Database locked after {retries + 1} attempts. Last error: {last_error}")
+        raise last_error
+    else:
+        raise sqlite3.OperationalError("Database connection failed after all retries")
 
 
 def init_db():
-    """Initialize database with all required tables."""
+    """
+    Initialize database with all required tables.
+    
+    Enables WAL mode for better multi-user concurrency support.
+    This function automatically enables WAL mode if not already enabled.
+    """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     
     with get_db_connection() as conn:
         cursor = conn.cursor()
+        
+        # Ensure WAL mode is enabled (critical for multi-user access)
+        cursor.execute("PRAGMA journal_mode=WAL")
+        wal_mode = cursor.fetchone()[0]
+        if wal_mode.upper() != 'WAL':
+            logger.warning(f"⚠️  WAL mode not enabled, current mode: {wal_mode}")
+            logger.warning("Attempting to enable WAL mode...")
+            # Try again with explicit mode change
+            cursor.execute("PRAGMA journal_mode=WAL")
+            wal_mode = cursor.fetchone()[0]
+            if wal_mode.upper() == 'WAL':
+                logger.info("✅ Successfully enabled WAL mode for better concurrency")
+            else:
+                logger.error(f"❌ Failed to enable WAL mode. Current mode: {wal_mode}")
+        else:
+            logger.info("✅ WAL mode enabled - database ready for multi-user access")
         
         # Table 1: Validation Runs
         cursor.execute("""

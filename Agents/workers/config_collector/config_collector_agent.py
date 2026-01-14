@@ -408,21 +408,21 @@ Execute the workflow now.
             logger.info(f"✅ Agent completed execution")
             
             # DEBUG: Log response structure
-            logger.info(f"🔍 DEBUG: Agent response type: {type(agent_response)}")
+            logger.debug(f"🔍 DEBUG: Agent response type: {type(agent_response)}")
             if hasattr(agent_response, '__dict__'):
-                logger.info(f"🔍 DEBUG: Agent response attributes: {list(agent_response.__dict__.keys())}")
+                logger.debug(f"🔍 DEBUG: Agent response attributes: {list(agent_response.__dict__.keys())}")
             if hasattr(agent_response, 'tool_results'):
-                logger.info(f"🔍 DEBUG: Tool results count: {len(agent_response.tool_results) if agent_response.tool_results else 0}")
+                logger.debug(f"🔍 DEBUG: Tool results count: {len(agent_response.tool_results) if agent_response.tool_results else 0}")
                 if agent_response.tool_results:
-                    logger.info(f"🔍 DEBUG: Last tool result type: {type(agent_response.tool_results[-1])}")
-                    logger.info(f"🔍 DEBUG: Last tool result: {str(agent_response.tool_results[-1])[:500]}")
+                    logger.debug(f"🔍 DEBUG: Last tool result type: {type(agent_response.tool_results[-1])}")
+                    logger.debug(f"🔍 DEBUG: Last tool result: {str(agent_response.tool_results[-1])[:500]}")
             
             # Parse the agent's response
             # Strands Agent returns the final tool result or a response object
             result_data = self._parse_agent_response(agent_response)
             
-            logger.info(f"🔍 DEBUG: Parsed result_data type: {type(result_data)}")
-            logger.info(f"🔍 DEBUG: Parsed result_data keys: {list(result_data.keys()) if isinstance(result_data, dict) else 'not a dict'}")
+            logger.debug(f"🔍 DEBUG: Parsed result_data type: {type(result_data)}")
+            logger.debug(f"🔍 DEBUG: Parsed result_data keys: {list(result_data.keys()) if isinstance(result_data, dict) else 'not a dict'}")
             
             # FALLBACK: If parsing failed but we know the tool was called, check for cached tool results
             if not isinstance(result_data, dict) or not result_data:

@@ -60,6 +60,9 @@ def setup_logging(log_level: Optional[str] = None) -> None:
 
 def configure_agent_loggers() -> None:
     """Configure logging for agent modules."""
+    # Get agent log level from environment (default: INFO for less verbosity)
+    agent_level = os.getenv("AGENT_LOG_LEVEL", "INFO")
+    
     agent_loggers = [
         'agents.supervisor',
         'agents.workers.config_collector',
@@ -74,11 +77,14 @@ def configure_agent_loggers() -> None:
     
     for logger_name in agent_loggers:
         logger = logging.getLogger(logger_name)
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(getattr(logging, agent_level.upper(), logging.INFO))
 
 
 def configure_external_loggers() -> None:
     """Configure logging levels for external libraries."""
+    # Get strands log level from environment (default: WARNING to reduce verbosity)
+    strands_level = os.getenv("STRANDS_LOG_LEVEL", "WARNING")
+    
     external_loggers = {
         'boto3': logging.WARNING,
         'botocore': logging.WARNING,
@@ -86,7 +92,7 @@ def configure_external_loggers() -> None:
         'git': logging.WARNING,
         'asyncio': logging.WARNING,
         'redis': logging.INFO,
-        'strands': logging.INFO,
+        'strands': getattr(logging, strands_level.upper(), logging.WARNING),
     }
     
     for logger_name, level in external_loggers.items():
@@ -209,3 +215,69 @@ def remove_database_logging(handler: DatabaseLogHandler):
     """
     root_logger = logging.getLogger()
     root_logger.removeHandler(handler)
+
+
+def enable_parallel_mode_logging():
+    """
+    Enable parallel mode logging:
+    - Adds database handler to save all logs to DB
+    - Suppresses detailed logs from agents (only shows summaries)
+    - Returns handler for cleanup
+    
+    This prevents log interleaving during parallel execution while
+    preserving all logs in the database for per-service review.
+    
+    Returns:
+        DatabaseLogHandler instance for cleanup
+    """
+    # Add database handler for all logs
+    db_handler = add_database_logging(
+        log_type='parallel_analysis',
+        log_level=logging.DEBUG  # Save everything to DB
+    )
+    
+    # Suppress verbose loggers in terminal (but they still go to DB)
+    # Only show high-level progress in terminal
+    verbose_loggers = [
+        'Agents.Supervisor.supervisor_agent',
+        'Agents.workers.config_collector.config_collector_agent',
+        'Agents.workers.drift_detector.drift_detector_agent',
+        'Agents.workers.guardrails_policy.guardrails_policy_agent',
+        'Agents.workers.triaging_routing.triaging_routing_agent',
+        'Agents.workers.certification.certification_engine_agent',
+        'shared.git_operations',
+        'shared.db',
+        'shared.drift_analyzer.drift',
+        'strands',
+        'botocore',
+        'boto3'
+    ]
+    
+    # Store original levels for restoration
+    original_levels = {}
+    for logger_name in verbose_loggers:
+        logger_obj = logging.getLogger(logger_name)
+        original_levels[logger_name] = logger_obj.level
+        # Set to WARNING for terminal (but DB handler still gets everything)
+        logger_obj.setLevel(logging.WARNING)
+    
+    # Store original levels in handler for restoration
+    db_handler._original_levels = original_levels
+    
+    return db_handler
+
+
+def disable_parallel_mode_logging(db_handler: DatabaseLogHandler):
+    """
+    Disable parallel mode logging and restore normal logging.
+    
+    Args:
+        db_handler: The database handler to remove
+    """
+    # Restore original log levels
+    if hasattr(db_handler, '_original_levels'):
+        for logger_name, level in db_handler._original_levels.items():
+            logging.getLogger(logger_name).setLevel(level)
+    
+    # Remove database handler
+    remove_database_logging(db_handler)
