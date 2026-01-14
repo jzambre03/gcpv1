@@ -19,7 +19,9 @@ PROJECT_ROOT = Path(__file__).parent.parent
 DB_PATH = PROJECT_ROOT / "config_data" / "golden_config.db"
 
 # Database connection settings for multi-user access
+# CRITICAL: These settings address "database is locked" errors in multi-user scenarios
 DB_TIMEOUT = 30.0  # Timeout in seconds (increased from default 5.0)
+                   # This sets busy_timeout - SQLite will wait this long for locks instead of failing immediately
 MAX_RETRIES = 5  # Maximum number of retries for locked database
 RETRY_DELAY_BASE = 0.1  # Base delay for exponential backoff (seconds)
 
@@ -44,20 +46,23 @@ def get_db_connection(retries: int = MAX_RETRIES):
         conn = None
         try:
             # Connect with increased timeout for multi-user scenarios
+            # CRITICAL: timeout parameter sets busy_timeout at SQLite level
+            # This makes SQLite wait instead of immediately failing with "database is locked"
             conn = sqlite3.connect(
                 str(DB_PATH),
-                timeout=DB_TIMEOUT,
+                timeout=DB_TIMEOUT,  # Sets busy_timeout (in seconds) - SQLite waits this long for locks
                 check_same_thread=False  # Allow connections from different threads
             )
             conn.row_factory = sqlite3.Row  # Enable column access by name
             
-            # Enable WAL mode for better concurrency (allows multiple readers + 1 writer)
-            # This is critical for multi-user access on the same database file
-            conn.execute("PRAGMA journal_mode=WAL")
+            # Verify and reinforce busy_timeout (defensive programming)
+            # The timeout param above should set this, but we verify it's actually set
+            conn.execute(f"PRAGMA busy_timeout = {int(DB_TIMEOUT * 1000)}")
             
-            # Set busy timeout at SQLite level (in milliseconds)
-            # This provides additional protection beyond the connection timeout
-            conn.execute(f"PRAGMA busy_timeout={int(DB_TIMEOUT * 1000)}")
+            # Enable WAL mode for better concurrency (allows multiple readers + 1 writer)
+            # CRITICAL: This must be done with busy_timeout already set, so if the database
+            # is temporarily locked during the mode change, SQLite waits instead of failing
+            conn.execute("PRAGMA journal_mode = WAL")
             
             # Yield the connection to the caller
             try:
