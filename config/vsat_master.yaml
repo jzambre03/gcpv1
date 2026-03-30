@@ -7,9 +7,10 @@ version: "1.0"
 
 # VSATs to monitor and sync
 # Format: name, url, enabled (that's it!)
+# NOTE: Currently only GitLab API is supported for auto-discovery
 vsats:
-  - name: saja9l7
-    url: https://gitlab.verizon.com/saja9l7
+  - name: jayeshics
+    url: https://github.com/jayeshics
     enabled: true
 
   # Add more VSATs here:
