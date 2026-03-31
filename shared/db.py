@@ -65,46 +65,36 @@ def get_db_connection(retries: int = MAX_RETRIES):
             conn.execute("PRAGMA journal_mode = WAL")
             
             # Yield the connection to the caller
-            try:
-                yield conn
-                conn.commit()
-                return  # Success - exit function
-                
-            except sqlite3.OperationalError as e:
-                error_msg = str(e).lower()
-                if ("database is locked" in error_msg or "database is busy" in error_msg) and attempt < retries:
-                    # Database locked - retry with backoff
-                    conn.rollback()
-                    last_error = e
-                    delay = RETRY_DELAY_BASE * (2 ** attempt)
-                    logger.warning(
-                        f"Database locked (attempt {attempt + 1}/{retries + 1}), "
-                        f"retrying in {delay:.2f}s... Error: {e}"
-                    )
-                    time.sleep(delay)
-                    # Continue to next iteration
-                else:
-                    # Not a locking issue or out of retries
-                    conn.rollback()
-                    raise
+            # NOTE: Don't retry inside yield - let the caller handle retries if needed
+            yield conn
+            conn.commit()
+            return  # Success - exit function
                     
-            except Exception as e:
-                # Non-locking error - rollback and re-raise immediately
-                conn.rollback()
-                logger.error(f"Database error: {e}")
-                raise
-                
         except sqlite3.OperationalError as e:
-            # Error during connection establishment
+            # Error during connection establishment OR inside yield block
             error_msg = str(e).lower()
+            
+            # Rollback if connection exists
+            if conn:
+                try:
+                    conn.rollback()
+                except:
+                    pass
+            
             if ("database is locked" in error_msg or "database is busy" in error_msg) and attempt < retries:
                 last_error = e
                 delay = RETRY_DELAY_BASE * (2 ** attempt)
                 logger.warning(
-                    f"Database locked during connection (attempt {attempt + 1}/{retries + 1}), "
+                    f"Database locked (attempt {attempt + 1}/{retries + 1}), "
                     f"retrying in {delay:.2f}s... Error: {e}"
                 )
                 time.sleep(delay)
+                # Close connection before retry
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
                 # Continue to next iteration
             else:
                 # Not a locking issue or out of retries
@@ -112,8 +102,13 @@ def get_db_connection(retries: int = MAX_RETRIES):
                 raise
                 
         except Exception as e:
-            # Unexpected error during connection
-            logger.error(f"Unexpected database error: {e}")
+            # Unexpected error - rollback and re-raise
+            if conn:
+                try:
+                    conn.rollback()
+                except:
+                    pass
+            logger.error(f"Database error: {e}")
             raise
             
         finally:
@@ -1291,7 +1286,9 @@ def save_log(
         metadata: Additional metadata as JSON
     """
     try:
-        with get_db_connection() as conn:
+        # Use retries=0 for logging to prevent blocking the main sync
+        # Logs are not critical - it's better to skip them than block operations
+        with get_db_connection(retries=0) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO logs (
@@ -1315,7 +1312,8 @@ def save_log(
             ))
     except Exception as e:
         # Don't let logging failures break the application
-        print(f"⚠️ Failed to save log to database: {e}")
+        # Silently skip database logs if database is busy
+        pass  # Changed from print to pass - don't spam console with log failures
 
 
 def get_logs(

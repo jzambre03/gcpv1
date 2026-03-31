@@ -75,29 +75,58 @@ def generate_unique_branch_name(prefix: str, environment: str) -> str:
 def setup_git_auth(repo_url: str, gitlab_token: Optional[str] = None) -> str:
     """
     Set up Git authentication using environment variables or provided token.
+    Automatically detects GitHub vs GitLab based on URL and uses appropriate auth method.
     
     Args:
-        repo_url: Repository URL
-        gitlab_token: Optional GitLab personal access token
+        repo_url: Repository URL (GitHub or GitLab)
+        gitlab_token: Optional GitLab/GitHub personal access token (legacy parameter name)
         
     Returns:
         Authenticated repository URL
     """
-    token = gitlab_token or os.getenv('GITLAB_TOKEN')
-    gitlab_username = os.getenv('GITLAB_USERNAME')
-    gitlab_password = os.getenv('GITLAB_PASSWORD')
+    # Detect if it's GitHub or GitLab
+    is_github = 'github.com' in repo_url.lower()
+    is_gitlab = 'gitlab' in repo_url.lower()
     
-    if token:
-        logger.info("Using GitLab personal access token for authentication")
-        if repo_url.startswith('https://'):
-            return repo_url.replace('https://', f'https://oauth2:{token}@')
-    elif gitlab_username and gitlab_password:
-        logger.info("Using username/password for authentication")
-        if repo_url.startswith('https://'):
-            return repo_url.replace('https://', f'https://{gitlab_username}:{gitlab_password}@')
+    if is_github:
+        # GitHub authentication
+        token = gitlab_token or os.getenv('GITHUB_TOKEN')
+        if token:
+            logger.info("Using GitHub personal access token for authentication")
+            if repo_url.startswith('https://'):
+                # GitHub uses format: https://TOKEN@github.com/user/repo.git
+                return repo_url.replace('https://', f'https://{token}@')
+        logger.warning("No GitHub token found. Proceeding without auth")
+        return repo_url
+        
+    elif is_gitlab:
+        # GitLab authentication
+        token = gitlab_token or os.getenv('GITLAB_TOKEN')
+        gitlab_username = os.getenv('GITLAB_USERNAME')
+        gitlab_password = os.getenv('GITLAB_PASSWORD')
+        
+        if token:
+            logger.info("Using GitLab personal access token for authentication")
+            if repo_url.startswith('https://'):
+                return repo_url.replace('https://', f'https://oauth2:{token}@')
+        elif gitlab_username and gitlab_password:
+            logger.info("Using username/password for authentication")
+            if repo_url.startswith('https://'):
+                return repo_url.replace('https://', f'https://{gitlab_username}:{gitlab_password}@')
+        
+        logger.warning("No GitLab authentication credentials found. Proceeding without auth")
+        return repo_url
     
-    logger.warning("No authentication credentials found. Proceeding without auth")
-    return repo_url
+    else:
+        # Generic Git server - try token from either source
+        token = gitlab_token or os.getenv('GITHUB_TOKEN') or os.getenv('GITLAB_TOKEN')
+        if token:
+            logger.info("Using generic token for authentication")
+            if repo_url.startswith('https://'):
+                return repo_url.replace('https://', f'https://{token}@')
+        
+        logger.warning("No authentication credentials found. Proceeding without auth")
+        return repo_url
 
 
 def check_branch_exists(repo_url: str, branch_name: str, gitlab_token: Optional[str] = None) -> bool:

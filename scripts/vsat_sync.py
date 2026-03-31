@@ -148,12 +148,14 @@ class VSATSyncLogger:
         root_logger = logging.getLogger()
         root_logger.addHandler(file_handler)
         
-        # Add database logging handler
-        db_handler = add_database_logging(
-            log_type='vsat_sync',
-            log_level=logging.INFO,
-            vsat=self.vsat_name
-        )
+        # DISABLED: Database logging during sync causes database locks
+        # Use file logging only - database logging can be added after sync completes
+        # db_handler = add_database_logging(
+        #     log_type='vsat_sync',
+        #     log_level=logging.INFO,
+        #     vsat=self.vsat_name
+        # )
+        db_handler = None  # No database logging during sync
         
         # Ensure child loggers propagate to root
         for logger_name in ['scripts.vsat_sync', 'shared.git_operations', 'shared.env_filter', 'shared.db']:
@@ -242,7 +244,7 @@ class VSATSyncLogger:
             root_logger.removeHandler(self.file_handler)
             self.file_handler.close()
         
-        if hasattr(self, 'db_handler'):
+        if hasattr(self, 'db_handler') and self.db_handler is not None:
             remove_database_logging(self.db_handler)
         
         end_time = datetime.now()
@@ -448,6 +450,150 @@ def create_http_session() -> requests.Session:
     return session
 
 
+def fetch_github_repos(
+    username: str,
+    github_token: str,
+    filters: Dict[str, Any],
+    session: requests.Session
+) -> List[Dict[str, Any]]:
+    """
+    Fetch repositories from a GitHub user or organization.
+    
+    Args:
+        username: GitHub username or organization name
+        github_token: GitHub personal access token
+        filters: Filter configuration
+        session: HTTP session with retry logic
+        
+    Returns:
+        List of repository objects (normalized to match GitLab structure)
+    """
+    logger.info(f"   Fetching GitHub repositories for: {username}")
+    
+    headers = {
+        "Authorization": f"token {github_token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    all_repos = []
+    page = 1
+    per_page = 100
+    
+    # Try as user first, then as organization
+    endpoints_to_try = [
+        ("user", f"https://api.github.com/users/{username}/repos"),
+        ("org", f"https://api.github.com/orgs/{username}/repos")
+    ]
+    
+    for endpoint_type, base_url in endpoints_to_try:
+        logger.info(f"   Trying GitHub API as {endpoint_type}...")
+        page = 1
+        all_repos = []
+        
+        while True:
+            url = base_url
+            params = {
+                "per_page": per_page,
+                "page": page,
+                "type": "all"  # all, owner, member
+            }
+            
+            try:
+                response = session.get(url, headers=headers, params=params, timeout=30)
+                
+                # Handle authentication/permission errors
+                if response.status_code == 401:
+                    raise VSATSyncError(
+                        f"Authentication failed for GitHub user/org '{username}'. "
+                        f"GitHub token is invalid or expired. Please check GITHUB_TOKEN in .env file."
+                    )
+                
+                if response.status_code == 403:
+                    # Check rate limit
+                    if 'X-RateLimit-Remaining' in response.headers:
+                        remaining = response.headers.get('X-RateLimit-Remaining')
+                        if remaining == '0':
+                            reset_time = response.headers.get('X-RateLimit-Reset')
+                            raise VSATSyncError(
+                                f"GitHub API rate limit exceeded. "
+                                f"Rate limit resets at: {reset_time}. "
+                                f"Please wait or use a token with higher rate limits."
+                            )
+                    
+                    raise VSATSyncError(
+                        f"Access denied to GitHub user/org '{username}'. "
+                        f"Your GitHub token does not have permission. "
+                        f"Please check that your token has 'repo' scope."
+                    )
+                
+                if response.status_code == 404:
+                    # Try next endpoint type (user vs org)
+                    logger.info(f"   Not found as {endpoint_type}, trying next...")
+                    break
+                
+                response.raise_for_status()
+                
+                repos = response.json()
+                if not repos:
+                    break
+                
+                all_repos.extend(repos)
+                page += 1
+                
+                # Rate limiting (GitHub allows 5000/hour with token)
+                time.sleep(0.2)
+                
+            except requests.exceptions.RequestException as e:
+                if response.status_code == 404:
+                    break  # Try next endpoint
+                logger.error(f"❌ Error fetching GitHub repos for {username}: {e}")
+                raise VSATSyncError(f"Failed to fetch GitHub repos for {username}")
+        
+        # If we found repos, stop trying other endpoints
+        if all_repos:
+            logger.info(f"   Found {len(all_repos)} repositories as {endpoint_type}")
+            break
+    
+    if not all_repos:
+        raise VSATSyncError(
+            f"GitHub user/org '{username}' not found. "
+            f"Please verify the VSAT name/URL in config/vsat_master.yaml"
+        )
+    
+    # Normalize GitHub API response to match GitLab structure
+    normalized_projects = []
+    for repo in all_repos:
+        # Skip archived repos
+        if repo.get('archived', False):
+            continue
+            
+        normalized_projects.append({
+            'id': repo['id'],
+            'name': repo['name'],
+            'path': repo['name'],  # GitHub uses same name for path
+            'http_url_to_repo': repo['clone_url'],
+            'web_url': repo['html_url'],
+            'description': repo.get('description', ''),
+            'default_branch': repo.get('default_branch', 'main')
+        })
+    
+    logger.info(f"   Normalized {len(normalized_projects)} GitHub repositories")
+    
+    # Apply filters
+    filtered_projects = apply_filters(normalized_projects, filters)
+    logger.info(f"   After filtering: {len(filtered_projects)} repositories")
+    
+    # Check for main branch only if required
+    if filters.get('require_main_branch', True):
+        projects_with_main = check_main_branch_parallel_github(
+            filtered_projects, github_token, session
+        )
+        logger.info(f"   With main branch: {len(projects_with_main)} repositories")
+        return projects_with_main
+    else:
+        logger.info(f"   ⚠️  Skipping main branch check (require_main_branch=False)")
+        return filtered_projects
+
+
 def fetch_user_projects(
     username: str,
     gitlab_base: str,
@@ -543,11 +689,29 @@ def fetch_vsat_projects(
     session: requests.Session
 ) -> List[Dict[str, Any]]:
     """
-    Fetch all projects from a VSAT (supports both groups and user namespaces).
-    Auto-detects whether VSAT is a group or user and uses appropriate API.
+    Fetch all projects from a VSAT (supports GitHub, GitLab groups and user namespaces).
+    Auto-detects whether VSAT is GitHub, GitLab group, or GitLab user and uses appropriate API.
     Optimized with parallel branch checking.
     """
     logger.info(f"📡 Fetching projects from VSAT: {vsat_name}")
+    
+    # Detect if this is GitHub or GitLab
+    is_github = 'github.com' in vsat_url.lower()
+    
+    if is_github:
+        # GitHub API path
+        logger.info(f"   Detected GitHub URL, using GitHub API")
+        github_token = os.getenv('GITHUB_TOKEN')
+        if not github_token:
+            raise VSATSyncError(
+                f"GitHub URL detected but GITHUB_TOKEN not set in environment. "
+                f"Please add GITHUB_TOKEN to your .env file"
+            )
+        
+        return fetch_github_repos(vsat_name, github_token, filters, session)
+    
+    # GitLab API path
+    logger.info(f"   Detected GitLab URL, using GitLab API")
     
     # Extract base URL
     gitlab_base = vsat_url.replace(f"/{vsat_name}", "")
@@ -660,6 +824,82 @@ def apply_filters(projects: List[Dict], filters: Dict[str, Any]) -> List[Dict]:
         ]
     
     return filtered
+
+
+def check_main_branch_parallel_github(
+    repos: List[Dict],
+    github_token: str,
+    session: requests.Session
+) -> List[Dict]:
+    """
+    Check which GitHub repositories have main branch (optimized with parallel execution).
+    """
+    repos_with_main_default = []
+    repos_to_check = []
+    
+    # Quick filter: Repos where default_branch == 'main'
+    for repo in repos:
+        if repo.get('default_branch') == 'main':
+            repo['has_main_branch'] = True
+            repos_with_main_default.append(repo)
+        else:
+            repos_to_check.append(repo)
+    
+    logger.info(f"   ⚡ Quick filter: {len(repos_with_main_default)} with main as default")
+    
+    if not repos_to_check:
+        return repos_with_main_default
+    
+    logger.info(f"   🔍 Checking {len(repos_to_check)} repositories for main branch...")
+    
+    # Parallel branch checking
+    def check_branch(repo):
+        """Check if repo has main branch"""
+        try:
+            web_url = repo.get('web_url', '')
+            
+            if not web_url:
+                return None
+            
+            # Extract owner and repo name from GitHub URL
+            # Format: https://github.com/owner/repo
+            parts = web_url.rstrip('/').split('/')
+            if len(parts) < 2:
+                return None
+            
+            owner = parts[-2]
+            repo_name = parts[-1]
+            
+            # GitHub API endpoint for checking branch
+            api_url = f"https://api.github.com/repos/{owner}/{repo_name}/branches/main"
+            headers = {
+                "Authorization": f"token {github_token}",
+                "Accept": "application/vnd.github.v3+json"
+            }
+            
+            response = session.get(api_url, headers=headers, timeout=10)
+            has_main = response.status_code == 200
+            
+            if has_main:
+                repo['has_main_branch'] = True
+                return repo
+            return None
+        except Exception as e:
+            # Silently skip - repo doesn't have main branch or error
+            return None
+    
+    filtered_repos = list(repos_with_main_default)
+    
+    # Use 50 workers for better performance (GitHub has good rate limits with token)
+    with ThreadPoolExecutor(max_workers=50) as executor:
+        futures = {executor.submit(check_branch, repo): repo for repo in repos_to_check}
+        
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                filtered_repos.append(result)
+    
+    return filtered_repos
 
 
 def check_main_branch_parallel(
@@ -1235,10 +1475,29 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
         filters = config.get('filters', {})
         global_defaults = config.get('global_defaults', {})
         
-        # Get GitLab token
+        # Get GitLab or GitHub token based on VSAT URLs
         gitlab_token = os.getenv('GITLAB_TOKEN')
-        if not gitlab_token:
-            raise VSATSyncError("GITLAB_TOKEN not set in environment")
+        github_token = os.getenv('GITHUB_TOKEN')
+        
+        # Check if we have at least one token
+        if not gitlab_token and not github_token:
+            raise VSATSyncError(
+                "Neither GITLAB_TOKEN nor GITHUB_TOKEN is set in environment. "
+                "Please add at least one token to your .env file."
+            )
+        
+        # Warn if VSATs require tokens we don't have
+        has_gitlab_vsats = any('gitlab' in vsat.get('url', '').lower() for vsat in vsats if vsat.get('enabled', True))
+        has_github_vsats = any('github.com' in vsat.get('url', '').lower() for vsat in vsats if vsat.get('enabled', True))
+        
+        if has_gitlab_vsats and not gitlab_token:
+            logger.warning("⚠️  GitLab VSATs detected but GITLAB_TOKEN not set - GitLab syncs will fail")
+        
+        if has_github_vsats and not github_token:
+            logger.warning("⚠️  GitHub VSATs detected but GITHUB_TOKEN not set - GitHub syncs will fail")
+        
+        # Use gitlab_token as fallback parameter (will be detected and switched in fetch functions)
+        token = gitlab_token or github_token
         
         # Create HTTP session with retries
         session = create_http_session()
@@ -1257,7 +1516,7 @@ def run_sync(force: bool = False) -> Dict[str, Any]:
         
         for vsat in vsats:
             added, updated, unchanged, errors = sync_vsat_services(
-                vsat, gitlab_token, sync_config, filters, global_defaults, session,
+                vsat, token, sync_config, filters, global_defaults, session,
                 existing_vsat_names=existing_vsat_names
             )
             total_added += added

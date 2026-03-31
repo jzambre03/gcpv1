@@ -1,10 +1,10 @@
 # Configuration Drift Detection System
 
-A multi-agent AI system for detecting and analyzing configuration drift using AWS Bedrock, GitLab integration, and policy-aware analysis.
+A multi-agent AI system for detecting and analyzing configuration drift using AWS Bedrock, GitHub/GitLab integration, and policy-aware analysis.
 
 ## 🎯 Overview
 
-This system validates configuration changes against a "Golden Config" (single source of truth) stored in GitLab, detects drift, enforces organizational policies, and generates detailed validation reports.
+This system validates configuration changes against a "Golden Config" (single source of truth) stored in GitHub or GitLab, detects drift, enforces organizational policies, and generates detailed validation reports.
 
 ### Key Features
 
@@ -13,7 +13,7 @@ This system validates configuration changes against a "Golden Config" (single so
 - **📋 Policy-Aware**: Enforces organization-specific rules with explicit policy violations
 - **🎯 Intelligent Verdicts**: 4-level decision system (PASS, WARN, REVIEW_REQUIRED, BLOCK)
 - **📊 Comprehensive Reports**: Detailed markdown reports with actionable recommendations
-- **🔐 GitLab Integration**: Automatic validation of merge requests
+- **🔐 GitHub & GitLab Support**: Works with both GitHub and GitLab repositories
 - **☁️ AWS Bedrock Powered**: Uses Claude 3.5 Sonnet and Claude 3 Haiku models
 
 ## 🏗️ Architecture
@@ -162,8 +162,9 @@ strands-multi-agent-system/
    # Edit .env with your values:
    # - AWS_REGION
    # - BEDROCK_MODEL_ID
-   # - GITLAB_TOKEN
-   # - GITLAB_REPO_URL
+   # - GITHUB_TOKEN (for GitHub repos)
+   # - GITLAB_TOKEN (for GitLab repos)
+   # - DEFAULT_REPO_URL
    # - GOLDEN_BRANCH
    # - DRIFTED_BRANCH
    ```
@@ -229,9 +230,10 @@ curl -X POST http://localhost:3000/api/validate \
 AWS_REGION=us-west-2
 BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
 
-# GitLab Configuration
-GITLAB_TOKEN=your-gitlab-token
-DEFAULT_REPO_URL=https://gitlab.verizon.com/saja9l7/golden_config.git
+# Git Configuration (GitHub or GitLab)
+GITHUB_TOKEN=your-github-token              # For GitHub repos
+GITLAB_TOKEN=your-gitlab-token              # For GitLab repos
+DEFAULT_REPO_URL=https://github.com/username/repo.git
 DEFAULT_GOLDEN_BRANCH=gold
 DEFAULT_DRIFT_BRANCH=drift
 
@@ -443,11 +445,11 @@ python3 validate_policies.py
    pip install -e ../Strands-agent/sdk-python-main
    ```
 
-3. **GitLab Authentication Failed**
+3. **Git Authentication Failed**
    ```
    Error: 401 Unauthorized
    ```
-   **Fix**: Check GITLAB_TOKEN in .env file
+   **Fix**: Check GITHUB_TOKEN or GITLAB_TOKEN in .env file (depending on which platform you're using)
 
 4. **Python Version Error**
    ```

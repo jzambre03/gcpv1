@@ -7,12 +7,18 @@ version: "1.0"
 
 # VSATs to monitor and sync
 # Format: name, url, enabled (that's it!)
+# NOTE: Supports both GitHub and GitLab
+# - For GitHub: https://github.com/username
+# - For GitLab: https://gitlab.company.com/group_or_username
 vsats:
-  - name: saja9l7
-    url: https://gitlab.verizon.com/saja9l7
+  - name: jayeshics
+    url: https://github.com/jayeshics
     enabled: true
 
   # Add more VSATs here:
   # - name: another_team
   #   url: https://gitlab.verizon.com/another_team
+  #   enabled: true
+  # - name: github_org
+  #   url: https://github.com/my-organization
   #   enabled: true

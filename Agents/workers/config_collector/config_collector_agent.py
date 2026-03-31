@@ -37,6 +37,26 @@ from shared.git_operations import (
     create_env_specific_config_branch
 )
 
+
+def get_git_token(repo_url: str) -> Optional[str]:
+    """
+    Get the appropriate Git token (GitHub or GitLab) based on repository URL.
+    
+    Args:
+        repo_url: Repository URL
+        
+    Returns:
+        Appropriate token or None
+    """
+    if 'github.com' in repo_url.lower():
+        return os.getenv('GITHUB_TOKEN')
+    elif 'gitlab' in repo_url.lower():
+        return os.getenv('GITLAB_TOKEN')
+    else:
+        # Try GitHub first, then GitLab
+        return os.getenv('GITHUB_TOKEN') or os.getenv('GITLAB_TOKEN')
+
+
 # Import golden branch tracker
 from shared.golden_branch_tracker import (
     get_active_golden_branch,
@@ -78,7 +98,7 @@ def ensure_repo_ready(repo_url: str, repo_path: Path) -> Optional[git.Repo]:
         else:
             logger.info(f"Cloning repository into temporary location: {repo_path}")
             repo_path.parent.mkdir(parents=True, exist_ok=True)
-            authenticated_url = setup_git_auth(repo_url, os.getenv('GITLAB_TOKEN'))
+            authenticated_url = setup_git_auth(repo_url, get_git_token(repo_url))
             repo = git.Repo.clone_from(authenticated_url, repo_path)
             logger.info("Fetching origin after clone...")
             repo.remotes.origin.fetch()
@@ -812,7 +832,7 @@ Execute the workflow now.
         
         try:
             configure_git_user()
-            authenticated_url = setup_git_auth(repo_url, os.getenv('GITLAB_TOKEN'))
+            authenticated_url = setup_git_auth(repo_url, get_git_token(repo_url))
             
             return {
                 "status": "success",
@@ -961,7 +981,7 @@ Execute the workflow now.
                 new_branch_name=golden_branch,
                 environment=environment,
                 config_paths=config_paths,
-                gitlab_token=os.getenv('GITLAB_TOKEN')
+                gitlab_token=get_git_token(repo_url)
             )
             
             if not success:
@@ -1032,7 +1052,7 @@ Execute the workflow now.
                 new_branch_name=drift_branch,
                 environment=environment,
                 config_paths=config_paths,
-                gitlab_token=os.getenv('GITLAB_TOKEN')
+                gitlab_token=get_git_token(repo_url)
             )
             
             if not success:
@@ -1275,7 +1295,7 @@ Execute the workflow now.
             
             # Create golden branch from drift branch
             # Use Git operations to copy drift branch to golden branch
-            authenticated_url = setup_git_auth(repo_url, os.getenv('GITLAB_TOKEN'))
+            authenticated_url = setup_git_auth(repo_url, get_git_token(repo_url))
             
             # Clone drift branch temporarily
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

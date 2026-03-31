@@ -536,8 +536,8 @@
                       e('span', null, '✓'),
                       'Certified'
                     ]),
-                    // ✅ Show drift count badge for non-production environments (alpha, beta1, beta2)
-                    isCertified && env !== 'prod' && status.drift_count > 0 && e('span', {
+                    // ✅ Show drift count badge for ALL environments when drift exists
+                    isCertified && status.drift_count > 0 && e('span', {
                       style: {
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -1335,7 +1335,7 @@
           }
         }, [setPersistedDriftData, serviceId, selectedEnvironment]);
         
-        // ✅ Load from sessionStorage when environment changes
+        // ✅ Load from sessionStorage OR database when environment changes
         React.useEffect(() => {
           const storageKey = `drift_analysis_${serviceId}_${selectedEnvironment}`;
           const storedData = sessionStorage.getItem(storageKey);
@@ -1353,11 +1353,62 @@
               sessionStorage.removeItem(storageKey);
             }
           } else {
-            // ✅ No stored data for this environment - clear the drift data
-            setDriftData(null);
-            setPersistedDriftData(null);
-            setHasRunAnalysis(false);
-            setPersistedHasRunAnalysis(false);
+            // ✅ No stored data - try to load latest run from database
+            const loadLatestRun = async () => {
+              try {
+                const response = await fetch(`/api/services/${serviceId}/run-history?environment=${selectedEnvironment}`);
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                if (data.runs && data.runs.length > 0) {
+                  const latestRun = data.runs[0];  // Most recent run
+                  
+                  // Load full run details
+                  const detailsResponse = await fetch(`/api/services/${serviceId}/run/${latestRun.run_id}`);
+                  if (detailsResponse.ok) {
+                    const runDetails = await detailsResponse.json();
+                    
+                    // Convert to drift data format expected by UI
+                    const driftDataFromDB = {
+                      summary: runDetails.llm_output?.summary || {},
+                      analysis_summary: runDetails.llm_output?.analysis_summary || '',
+                      risk_assessment: runDetails.llm_output?.risk_assessment || '',
+                      recommendations: runDetails.llm_output?.recommendations || [],
+                      drifts: runDetails.llm_output?.drifts || [],  // UI expects 'drifts' from llm_output
+                      high: runDetails.llm_output?.high || [],
+                      medium: runDetails.llm_output?.medium || [],
+                      low: runDetails.llm_output?.low || [],
+                      allowed: runDetails.llm_output?.allowed || [],
+                      run_id: latestRun.run_id,
+                      environment: selectedEnvironment
+                    };
+                    
+                    // Update state and sessionStorage
+                    setDriftData(driftDataFromDB);
+                    setPersistedDriftData(driftDataFromDB);
+                    setHasRunAnalysis(true);
+                    setPersistedHasRunAnalysis(true);
+                    sessionStorage.setItem(storageKey, JSON.stringify(driftDataFromDB));
+                    console.log(`✅ Loaded latest run from database: ${latestRun.run_id}`);
+                  }
+                } else {
+                  // No runs found - clear the drift data
+                  setDriftData(null);
+                  setPersistedDriftData(null);
+                  setHasRunAnalysis(false);
+                  setPersistedHasRunAnalysis(false);
+                }
+              } catch (e) {
+                console.error('Failed to load latest run from database:', e);
+                // Clear on error
+                setDriftData(null);
+                setPersistedDriftData(null);
+                setHasRunAnalysis(false);
+                setPersistedHasRunAnalysis(false);
+              }
+            };
+            
+            loadLatestRun();
           }
         }, [serviceId, selectedEnvironment]);  // ✅ Triggers when environment changes
         
@@ -2098,8 +2149,8 @@
                     e('span', null, '✓'),
                 'Certified'
             ]),
-                  // ✅ Show drift count badge for non-production environments (alpha, beta1, beta2)
-                  isCertified && env !== 'prod' && cert.drift_count > 0 && e('span', {
+                  // ✅ Show drift count badge for ALL environments when drift exists
+                  isCertified && cert.drift_count > 0 && e('span', {
                     style: {
                       display: 'inline-flex',
                       alignItems: 'center',
