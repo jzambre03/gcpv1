@@ -7,9 +7,6 @@ version: "1.0"
 
 # VSATs to monitor and sync
 # Format: name, url, enabled (that's it!)
-# NOTE: Supports both GitHub and GitLab
-# - For GitHub: https://github.com/username
-# - For GitLab: https://gitlab.company.com/group_or_username
 vsats:
   - name: jayeshics
     url: https://github.com/jayeshics
